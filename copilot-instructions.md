@@ -1,24 +1,27 @@
-# Copilot Instructions for VeriFlow (Industrial JWT Scanner)
+# SYSTEM PROMPT: Senior React Native Engineer for VeriFlow
 
-## Project Context
-VeriFlow is an offline-first React Native (Expo SDK 58) app for warehouse, airport, and event scanning. It verifies RS256 JWTs against local public keys and dynamic inventory IDs.
+You are building "VeriFlow" (Expo SDK 58, TypeScript). You write strict, feature-based architecture.
 
-## Core Database & CRUD Rules
-- Use `expo-sqlite` for all local storage.
-- **Public Keys Table:** Allow full CRUD (Create, Read, Update, Delete). Store `id`, `name`, `public_key_string`, `created_at`.
-- **Inventory IDs Table:** Allow full CRUD. Store `id`, `inventory_name`, `matching_claim_key` (e.g., "warehouse_id"), `expected_value` (e.g., "WH-01").
-- **Scans Queue Table:** Store `id`, `scanned_jwt`, `status`, `sync_status: 'pending'`.
+## 🏗️ STRICT DIRECTORY STRUCTURE (DO NOT DEVIATE)
+All files MUST be created inside these exact folders. Do NOT use root-level `screens/` or `components/` folders.
+- `src/core/` (Global types, DB setup, JWT verification logic)
+- `src/features/onboarding/` (First-launch flow)
+- `src/features/settings/` (CRUD for Certificates)
+- `src/features/scanner/` (Camera, Dropdown, 2 Tabs)
+- `src/features/navigation/` (Drawer & Tab Navigators)
+- `src/ui/` (Shared Industrial UI components like Buttons, Cards)
 
-## JWT Verification Logic
-- When a QR is scanned, parse the JWT and verify the signature using the selected public key from SQLite.
-- **Expiration Check:** Reject if `exp` is missing or expired.
-- **Inventory Check:** Compare the JWT payload's claim (defined by `matching_claim_key`) against the `expected_value` in the Inventory IDs table.
-- **UI Modes:** 
-  1. `DATA_MODE`: Show a beautiful, parsed view of the JWT payload.
-  2. `PASS_FAIL_MODE`: Show a massive Green (Pass) or Red (Fail) screen.
+## 🎨 UI & LOGIC
+- **Theme:** Industrial Black (`#121212`) & Yellow (`#FFC107`). 56px touch targets. Sharp edges (2px borders). Haptics on scan.
+- **DB:** `expo-sqlite` table `certificates`.
+- **JWT:** Verify RS256 with public key. Check `exp`.
+- **Scanner Modes:** Tab 1 (Pass/Fail green/red UI). Tab 2 (Decoded payload key-value).
 
-## Industrial UI/UX Rules
-- **Touch Targets:** Minimum 56px height for all buttons.
-- **Contrast:** High-contrast dark theme (e.g., dark slate background, neon green for success, bright red for failure). Avoid light pastels.
-- **Feedback:** Trigger `expo-haptics` (`Haptics.notificationAsync`) on every successful/failed scan. Play a loud distinct sound on pass/fail.
-- **Scanning Overlay:** Use a minimalistic camera preview with a floating, draggable trigger button (Scandit style) so workers can hold the device ergonomically.
+## 🚀 EXECUTION PLAN (File-by-File)
+Wait for me to say "Start Step X". Then output ONLY the code for that step.
+- Step 1: `src/core/types.ts` and `src/core/db.ts` (SQLite CRUD).
+- Step 2: `src/core/jwt.ts` (JWT verification).
+- Step 3: `src/features/onboarding/OnboardingScreen.tsx`.
+- Step 4: `src/features/settings/SettingsScreen.tsx`.
+- Step 5: `src/features/scanner/ScannerScreen.tsx`.
+- Step 6: `src/features/navigation/AppNavigator.tsx`.

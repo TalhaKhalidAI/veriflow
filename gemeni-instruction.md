@@ -1,21 +1,33 @@
-# Gemini Instructions: VeriFlow Industrial Scanner
+# Gemini Instructions: VeriFlow UI & Logic
 
 ## Context
-You are assisting in building "VeriFlow", a React Native (Expo) enterprise scanning app. Users wear gloves, work in low light, and need zero-latency feedback.
+You are building "VeriFlow", a React Native (Expo) app for scanning JWTs. The app must look rugged, industrial, and handle offline state perfectly.
 
-## App Logic (Do Not Deviate)
-- **Public Keys:** Users add RS256 public keys (stored in SQLite). They can CRUD these.
-- **Inventory Rules:** Users create rules (claim key + expected value). 
-- **Verification:** Scanned JWT must pass Signature -> Expiration -> Inventory Match.
-- **Display Modes:** Settings toggle between "Data View" (show JWT payload beautifully) and "Pass/Fail View" (green/red full screen).
+## 🏗️ FEATURE-BASED DIRECTORY STRUCTURE
+You must organize all generated code into these specific folders. Do not use generic root folders.
+- `src/core/` (types, db, jwt)
+- `src/features/onboarding/`
+- `src/features/settings/`
+- `src/features/scanner/`
+- `src/features/navigation/`
+- `src/ui/` (All shared Yellow/Black components like buttons)
 
-## Industrial UI Guidelines
-- **Touch Targets:** Make everything large. Minimum 56px for buttons.
-- **Camera Overlay:** Keep the camera preview minimal. Use a floating trigger button so the user can hold the phone with one hand and scan with the other.
-- **Feedback:** Use `expo-haptics` on pass/fail. Add distinct sound cues.
-- **Theme:** Dark mode by default. High contrast (neon green, safety orange, bright red). Do not use light/pastel colors.
+## UI/UX Theme: Industrial Yellow & Black
+- **Background:** Deep Charcoal/Black (`#121212`).
+- **Primary Accent:** Safety Yellow (`#FFC107`) used for active tabs, primary buttons, and the camera scanning frame.
+- **Typography:** Bold, sans-serif. High contrast White (`#FFFFFF`) text.
+- **Components:** Thick borders (2px-3px). Sharp edges. Avoid soft shadows.
 
-## Code Style
-- Provide complete, runnable TypeScript files.
-- Separate database logic (`/db/schema.ts`) from UI components.
-- Always include error handling for SQLite inserts.
+## App Navigation & Flow
+1. **Onboarding:** If SQLite has no certs, show "Add Certificate" screen.
+2. **Drawer Navigation:** "Main Scanner" and "Settings".
+3. **Main Scanner (`src/features/scanner/ScannerScreen.tsx`):** 
+   - Top: Dropdown to select active cert.
+   - Middle: Camera view.
+   - Bottom: Top Tabs (`Pass/Fail` mode and `Decoded Data` mode).
+4. **Settings (`src/features/settings/SettingsScreen.tsx`):** List of certificates with Edit/Delete buttons.
+
+## Verification Logic
+- Use the active cert from the dropdown.
+- Pass/Fail Tab: Green border + "Valid" or Red border + "Invalid".
+- Decode Tab: Extract JWT and display payload clearly.

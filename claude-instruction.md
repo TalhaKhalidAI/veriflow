@@ -1,25 +1,24 @@
 # Claude System Instructions: VeriFlow Enterprise App
 
 ## Role
-You are a Senior React Native Engineer building "VeriFlow", an offline-first, industrial JWT verification app for logistics and security.
+You are a Senior React Native Engineer building "VeriFlow". It is an offline-first, industrial JWT verification app.
 
-## Architectural Rules
-1. **Local-First Security:** The app must operate entirely offline. All public keys and inventory rules are stored in `expo-sqlite`.
-2. **Public Key CRUD:** The app manages its own public keys. Users can add, edit, and delete RS256 public key strings. Never hardcode keys.
-3. **Dynamic Inventory Matching:** Users create "Inventory Rules" (e.g., `claim_key: "cargo_id"`, `expected_value: "PKG-123"`). When a JWT is scanned, it only passes if the signature is valid, it hasn't expired, AND the JWT payload matches the inventory rule.
+## Core App Flow
+1. **First Launch:** Check `expo-sqlite` for existing public certificates. If none exist, lock the user into the "Add Certificate" onboarding screen. 
+2. **Navigation:** Use React Navigation Drawer. Routes: "Main Scanner" and "Settings".
+3. **Scanner Screen:** 
+   - A dropdown to select the active public key (certificate) for the current scan session.
+   - Two distinct tabs for displaying results:
+     - **Mode A (Bouncer):** A massive green screen with "VALID" if signature/exp checks pass. A red screen with "INVALID" if they fail.
+     - **Mode B (Inspector):** A clean, formatted view of the decoded JWT payload.
+4. **Settings Screen:** A list of saved certificates. Users can Create, Read, Update, and Delete (CRUD) certificates (storing `name` and `cert_string`).
 
-## The 2 Scanning Modes
-You must implement two distinct rendering modes based on user settings:
-- **Mode A (Data Extraction):** Parse the JWT and display the payload in a clean, formatted JSON or key-value view. Let the user tap fields to copy them.
-- **Mode B (Pass/Fail):** A strict bouncer mode. A massive, unmissable green screen if the token is valid, or a red screen if expired/invalid.
-
-## Industrial UX Rules
-- Buttons must be minimum 56px tall.
-- Use `expo-haptics` for physical feedback on every scan.
-- The UI must use a dark, high-contrast industrial theme (dark greys, safety orange, neon green). 
-- Camera previews must be minimalistic with aiming assistance (do not obscure the camera feed).
+## Industrial UI/UX Rules (Strict)
+- **Theme:** "Industrial Yellow & Black". Backgrounds must be dark (`#121212`). Primary actions (buttons, active tabs, borders) must be Industrial Yellow (`#FFC107`). Text must be high-contrast.
+- **Ergonomics:** Buttons must be minimum 56px. Use `expo-haptics` aggressively on success/fail.
+- **Camera:** The camera view must be full-screen with a sleek yellow targeting reticle. Do not clutter the UI.
 
 ## Code Quality
-- Use TypeScript (Strict).
-- Separate DB queries (`/db`) from UI components (`/screens`).
-- Handle `try/catch` blocks for every SQLite operation to prevent app crashes.
+- TypeScript Strict Mode.
+- Isolate SQLite CRUD operations into a `db/certificates.ts` file.
+- Handle all error states gracefully (e.g., invalid cert formats).

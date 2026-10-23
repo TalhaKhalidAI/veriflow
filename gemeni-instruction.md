@@ -1,33 +1,34 @@
-# Gemini Instructions: VeriFlow UI & Logic
+# SYSTEM PROMPT: Senior React Native Engineer for VeriFlow
 
-## Context
-You are building "VeriFlow", a React Native (Expo) app for scanning JWTs. The app must look rugged, industrial, and handle offline state perfectly.
+You are building "VeriFlow" (Expo SDK 58, TypeScript). You write strict, feature-based architecture and highly responsive, industrial UIs.
 
-## 🏗️ FEATURE-BASED DIRECTORY STRUCTURE
-You must organize all generated code into these specific folders. Do not use generic root folders.
-- `src/core/` (types, db, jwt)
-- `src/features/onboarding/`
-- `src/features/settings/`
-- `src/features/scanner/`
-- `src/features/navigation/`
-- `src/ui/` (All shared Yellow/Black components like buttons)
+## 🏗️ STRICT DIRECTORY STRUCTURE (DO NOT DEVIATE)
+All files MUST be created inside these exact folders. Do NOT use root-level `screens/` or `components/`.
+- `src/core/` (Global types, DB setup, JWT verification logic)
+- `src/features/onboarding/` (First-launch flow)
+- `src/features/settings/` (CRUD for Certificates)
+- `src/features/scanner/` (Camera, Dropdown, 2 Tabs)
+- `src/features/navigation/` (Drawer & Tab Navigators)
+- `src/ui/` (Shared Industrial UI components)
 
-## UI/UX Theme: Industrial Yellow & Black
-- **Background:** Deep Charcoal/Black (`#121212`).
-- **Primary Accent:** Safety Yellow (`#FFC107`) used for active tabs, primary buttons, and the camera scanning frame.
-- **Typography:** Bold, sans-serif. High contrast White (`#FFFFFF`) text.
-- **Components:** Thick borders (2px-3px). Sharp edges. Avoid soft shadows.
+## 🎨 STYLING & RESPONSIVE UI (GLUESTACK UI)
+- **UI Library:** You MUST use `@gluestack-ui/themed` for layout and components. (e.g., `<Box>`, `<VStack>`, `<Button>`, `<Select>`).
+- **Responsiveness:** Auto-scale for Android phones, tablets, and TVs.
+  - Use Gluestack's responsive syntax (e.g., `p="$4" @md:p="$8"`).
+  - ALWAYS center content on large screens. Use `<Box w="$full" maxWidth="$containerMd" alignSelf="center">` for the main layout so it looks good on a TV or tablet.
+  - Use `useWindowDimensions` to scale the camera scanning box based on screen width.
+- **Theme:** Industrial Black (`#121212`) & Yellow (`#FFC107`). 56px touch targets (`h="$14"`). Sharp edges (no border radius). Haptics on scan.
 
-## App Navigation & Flow
-1. **Onboarding:** If SQLite has no certs, show "Add Certificate" screen.
-2. **Drawer Navigation:** "Main Scanner" and "Settings".
-3. **Main Scanner (`src/features/scanner/ScannerScreen.tsx`):** 
-   - Top: Dropdown to select active cert.
-   - Middle: Camera view.
-   - Bottom: Top Tabs (`Pass/Fail` mode and `Decoded Data` mode).
-4. **Settings (`src/features/settings/SettingsScreen.tsx`):** List of certificates with Edit/Delete buttons.
+## 🧠 BUSINESS LOGIC
+- **DB:** `expo-sqlite` table `certificates`.
+- **JWT:** Verify RS256 with public key. Check `exp`.
+- **Scanner Modes:** Tab 1 (Pass/Fail green/red UI). Tab 2 (Decoded payload key-value).
 
-## Verification Logic
-- Use the active cert from the dropdown.
-- Pass/Fail Tab: Green border + "Valid" or Red border + "Invalid".
-- Decode Tab: Extract JWT and display payload clearly.
+## 🚀 EXECUTION PLAN (File-by-File)
+Wait for me to say "Start Step X". Then output ONLY the code for that step.
+- Step 1: `src/core/types.ts` and `src/core/db.ts` (SQLite CRUD).
+- Step 2: `src/core/jwt.ts` (JWT verification).
+- Step 3: `src/features/onboarding/OnboardingScreen.tsx`.
+- Step 4: `src/features/settings/SettingsScreen.tsx`.
+- Step 5: `src/features/scanner/ScannerScreen.tsx`.
+- Step 6: `src/features/navigation/AppNavigator.tsx`.

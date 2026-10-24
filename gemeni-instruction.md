@@ -1,34 +1,62 @@
-# SYSTEM PROMPT: Senior React Native Engineer for VeriFlow
+# VeriFlow Gemini Instruction
 
-You are building "VeriFlow" (Expo SDK 58, TypeScript). You write strict, feature-based architecture and highly responsive, industrial UIs.
+You are building VeriFlow, an industrial offline JWT verification mobile app for Android using Expo and React Native.
 
-## 🏗️ STRICT DIRECTORY STRUCTURE (DO NOT DEVIATE)
-All files MUST be created inside these exact folders. Do NOT use root-level `screens/` or `components/`.
-- `src/core/` (Global types, DB setup, JWT verification logic)
-- `src/features/onboarding/` (First-launch flow)
-- `src/features/settings/` (CRUD for Certificates)
-- `src/features/scanner/` (Camera, Dropdown, 2 Tabs)
-- `src/features/navigation/` (Drawer & Tab Navigators)
-- `src/ui/` (Shared Industrial UI components)
+## Product goal
+- Verify JWTs locally with a stored public key.
+- Scan QR strings containing a JWT.
+- Allow selection of the verification public key from a SQLite-backed table.
+- Show pass/fail feedback and decoded payload details.
+- Keep the UI industrial, dark, high-contrast, and performance-focused.
 
-## 🎨 STYLING & RESPONSIVE UI (GLUESTACK UI)
-- **UI Library:** You MUST use `@gluestack-ui/themed` for layout and components. (e.g., `<Box>`, `<VStack>`, `<Button>`, `<Select>`).
-- **Responsiveness:** Auto-scale for Android phones, tablets, and TVs.
-  - Use Gluestack's responsive syntax (e.g., `p="$4" @md:p="$8"`).
-  - ALWAYS center content on large screens. Use `<Box w="$full" maxWidth="$containerMd" alignSelf="center">` for the main layout so it looks good on a TV or tablet.
-  - Use `useWindowDimensions` to scale the camera scanning box based on screen width.
-- **Theme:** Industrial Black (`#121212`) & Yellow (`#FFC107`). 56px touch targets (`h="$14"`). Sharp edges (no border radius). Haptics on scan.
+## Core design rules
+- Primary colors: black and yellow. Use deep navy-black backgrounds and bright industrial yellow highlights.
+- Secondary action colors: muted slate panels, white labels, green pass states, and red fail states.
+- Sharp edges, strong contrast, large readable typography, and bold UI hierarchy.
+- Keep the layout mobile-first, but ensure it still looks polished on larger Android screens.
+- Add tactile feedback for scan events and success/failure states.
+- Use minimal chrome, strong data separation, and technical controls that feel like an industrialverification console.
 
-## 🧠 BUSINESS LOGIC
-- **DB:** `expo-sqlite` table `certificates`.
-- **JWT:** Verify RS256 with public key. Check `exp`.
-- **Scanner Modes:** Tab 1 (Pass/Fail green/red UI). Tab 2 (Decoded payload key-value).
+## App structure
+- Keep the app in the existing Expo project structure.
+- Keep screen components in `src/Pages/` unless you are intentionally creating a route file under `src/app/`.
+- Keep business logic in `src/core/`.
+- Keep database logic, JWT verification, and UI state separated cleanly.
 
-## 🚀 EXECUTION PLAN (File-by-File)
-Wait for me to say "Start Step X". Then output ONLY the code for that step.
-- Step 1: `src/core/types.ts` and `src/core/db.ts` (SQLite CRUD).
-- Step 2: `src/core/jwt.ts` (JWT verification).
-- Step 3: `src/features/onboarding/OnboardingScreen.tsx`.
-- Step 4: `src/features/settings/SettingsScreen.tsx`.
-- Step 5: `src/features/scanner/ScannerScreen.tsx`.
-- Step 6: `src/features/navigation/AppNavigator.tsx`.
+## Required screen behavior
+- Scanner screen must include:
+  - verification key dropdown
+  - start/scan QR button
+  - camera preview or placeholder state
+  - pass/fail panel
+  - decoded payload/data tab
+  - scanned JWT display
+- Settings should support:
+  - adding public keys to SQLite
+  - listing active keys
+  - inventory rules with claim key and expected value
+
+## JWT logic requirements
+- Verify RS256 signatures with a PEM public key.
+- Check `exp` claim.
+- Strip only CR characters and outer whitespace from the public key, do not corrupt PEM content.
+- Use the selected key from the dropdown for verification.
+- Show clear error messaging when no key is selected, no JWT is found, or verification fails.
+
+## UI quality bar
+- Keep sections visually distinct with bordered cards and strong headings.
+- Make the main action button large and clear.
+- Use dark surfaces with yellow borders and strong text contrast.
+- Keep status strings concise and technical.
+- Better than before means cleaner hierarchy, stronger spacing, less clutter, more premium industrial appearance.
+
+## Do not do
+- Do not use overly rounded or soft mobile UI.
+- Do not add useless animations or cartoon styling.
+- Do not clutter the screen with decorative elements.
+- Do not store malformed PEM data.
+- Do not ignore the selected key during verification.
+
+## Final output rule
+- When implementing UI, prefer direct, working code with strong layout structure and a polished industrial look.
+- Keep the app functional first, then refine the visual treatment to be sharper and more premium than the previous version.

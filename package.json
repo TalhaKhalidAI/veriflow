@@ -4,6 +4,8 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~58.0.22",
+    "@gluestack-ui/config": "^1.1.20",
+    "@gluestack-ui/themed": "^1.1.73",
     "expo": "~58.0.17",
     "expo-camera": "~58.0.12",
     "expo-constants": "~58.0.13",
@@ -13,6 +15,7 @@
     "expo-haptics": "~58.0.7",
     "expo-image": "~58.0.16",
     "expo-linking": "~58.0.14",
+    "expo-notifications": "~58.1.6",
     "expo-router": "~58.0.25",
     "expo-splash-screen": "~58.0.11",
     "expo-sqlite": "~58.0.13",

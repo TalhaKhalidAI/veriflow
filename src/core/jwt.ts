@@ -78,7 +78,7 @@ export async function verifyJwtAgainstPublicKey(
         status: 'fail',
         reason: Platform.OS === 'web'
           ? 'Web Crypto is unavailable in this browser'
-          : 'Native crypto module is missing. Rebuild the app to verify JWTs.',
+          : 'Native crypto module is missing. Rebuild the app to verify signed data.',
       };
     }
 
@@ -103,7 +103,7 @@ export async function verifyJwtAgainstPublicKey(
       return {
         valid: false,
         status: 'fail',
-        reason: 'JWT expired or missing exp claim',
+        reason: 'Signed data expired or is missing its expiration claim',
         payload: payload as Record<string, any>,
       };
     }
@@ -123,7 +123,7 @@ export async function verifyJwtAgainstPublicKey(
     return {
       valid: true,
       status: 'pass',
-      reason: 'JWT verified successfully',
+      reason: 'Verification passed',
       payload: payload as Record<string, any>,
     };
   } catch (error) {
@@ -137,7 +137,7 @@ export async function verifyJwtAgainstPublicKey(
     return {
       valid: false,
       status: 'fail',
-      reason: error instanceof Error ? error.message : 'JWT verification failed',
+      reason: error instanceof Error ? error.message : 'Verification failed',
     };
   }
 }

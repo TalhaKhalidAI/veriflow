@@ -12,7 +12,7 @@ import {
 import type { PermissionResponse } from 'expo';
 import type { BarcodeScanningResult } from 'expo-camera';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Platform, StyleSheet, useWindowDimensions } from 'react-native';
+import { Image, Modal, Platform, StyleSheet, useWindowDimensions } from 'react-native';
 
 type CameraModuleType = typeof import('expo-camera');
 let cameraModule: CameraModuleType | null = null;
@@ -316,14 +316,22 @@ export default function ScannerPage() {
   return (
     <Box flex={1} bg={BLACK} px="$4" pt="$2" pb="$2">
       <VStack space="sm" flex={1}>
-        <VStack space="xs">
-          <Heading size="xl" color={YELLOW} fontWeight="900">
-            VeriFlow
-          </Heading>
-          <Text color="#e2e8f0" fontSize="$sm">
-            Industrial Offline Scanner
-          </Text>
-        </VStack>
+        <HStack alignItems="center" space="sm">
+          <Image
+            source={require('../assets/msi.png')}
+            style={{ width: 48, height: 42 }}
+            resizeMode="contain"
+            accessibilityLabel="VeriFlow logo"
+          />
+          <VStack space="xs" flex={1}>
+            <Heading size="lg" color={YELLOW} fontWeight="900">
+              VeriFlow
+            </Heading>
+            <Text color="#e2e8f0" fontSize="$xs">
+              Industrial Offline Scanner
+            </Text>
+          </VStack>
+        </HStack>
 
         <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$2">
           <HStack bg={PANEL_ALT} borderRadius="$lg" overflow="hidden" borderWidth={1} borderColor={YELLOW}>

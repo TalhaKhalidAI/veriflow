@@ -1,24 +1,25 @@
-import React, { useEffect, useState } from 'react';
 import {
-  Box,
-  Button,
-  ButtonText,
-  HStack,
-  Input,
-  InputField,
-  ScrollView,
-  Text,
-  VStack,
+    Box,
+    Button,
+    ButtonText,
+    HStack,
+    Input,
+    InputField,
+    ScrollView,
+    Text,
+    VStack,
 } from '@gluestack-ui/themed';
+import { useEffect, useState } from 'react';
+import { Image } from 'react-native';
 
 import {
-  addInventoryItem,
-  addPublicKey,
-  deleteInventoryItem,
-  deletePublicKey,
-  getInventoryItems,
-  getPublicKeys,
-  initDatabase,
+    addInventoryItem,
+    addPublicKey,
+    deleteInventoryItem,
+    deletePublicKey,
+    getInventoryItems,
+    getPublicKeys,
+    initDatabase,
 } from '@/core/db';
 import { InventoryRecord, PublicKeyRecord } from '@/core/types';
 
@@ -67,9 +68,17 @@ export default function SettingsPage() {
     <ScrollView bg={BLACK} flex={1}>
       <Box px="$4" py="$6">
         <VStack space="lg">
-          <Text color={YELLOW} fontSize="$3xl" fontWeight="900">
-            Settings
-          </Text>
+          <HStack alignItems="center" space="sm">
+            <Image
+              source={require('../assets/msi.png')}
+              style={{ width: 46, height: 40 }}
+              resizeMode="contain"
+              accessibilityLabel="VeriFlow logo"
+            />
+            <Text color={YELLOW} fontSize="$3xl" fontWeight="900">
+              Settings
+            </Text>
+          </HStack>
 
           <Box borderWidth={2} borderColor={YELLOW} borderRadius="$xl" bg={PANEL} p="$4">
             <Text color="#f8fafc" fontSize="$xl" fontWeight="800" mb="$4">

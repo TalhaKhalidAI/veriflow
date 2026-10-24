@@ -1,9 +1,9 @@
 import { config } from '@gluestack-ui/config';
 import { GluestackUIProvider } from '@gluestack-ui/themed';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import { Drawer } from 'expo-router/drawer';
+import { Drawer, DrawerContentScrollView, DrawerItemList } from 'expo-router/drawer';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { Image, StyleSheet, Text, View, useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 
@@ -17,6 +17,23 @@ export default function RootLayout() {
       <GluestackUIProvider config={config}>
         <AnimatedSplashOverlay />
         <Drawer
+          drawerContent={(props) => (
+            <DrawerContentScrollView {...props} contentContainerStyle={styles.drawerContent}>
+              <View style={styles.drawerBrand}>
+                <Image
+                  source={require('../assets/msi.png')}
+                  style={styles.drawerLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="VeriFlow logo"
+                />
+                <View>
+                  <Text style={styles.drawerTitle}>VeriFlow</Text>
+                  <Text style={styles.drawerSubtitle}>INDUSTRIAL OFFLINE SCANNER</Text>
+                </View>
+              </View>
+              <DrawerItemList {...props} />
+            </DrawerContentScrollView>
+          )}
           screenOptions={{
             headerShown: true,
             headerTitle: 'VeriFlow',
@@ -27,7 +44,7 @@ export default function RootLayout() {
             drawerActiveTintColor: '#facc15',
             drawerInactiveTintColor: '#e2e8f0',
             drawerLabelStyle: { fontWeight: '700' },
-            sceneContainerStyle: { backgroundColor: '#050b14' },
+            sceneStyle: { backgroundColor: '#050b14' },
           }}
         >
           <Drawer.Screen name="index" options={{ title: 'Home', drawerLabel: 'Home' }} />
@@ -38,3 +55,36 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  drawerContent: {
+    flexGrow: 1,
+    backgroundColor: '#0b1220',
+  },
+  drawerBrand: {
+    minHeight: 112,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  drawerLogo: {
+    width: 58,
+    height: 58,
+  },
+  drawerTitle: {
+    color: '#facc15',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  drawerSubtitle: {
+    color: '#cbd5e1',
+    fontSize: 9,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+});

@@ -32,7 +32,7 @@ try {
   Haptics = null;
 }
 
-import { addScanToQueue, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
+import { addScanHistory, addScanToQueue, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
 import { verifyJwtAgainstPublicKey } from '@/core/jwt';
 import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '@/core/types';
 
@@ -108,6 +108,16 @@ function extractJwt(value: string): string | null {
   candidate = candidate.trim();
   const segments = candidate.split('.');
   return segments.length === 3 && segments.every(Boolean) ? candidate : null;
+}
+
+function serializeScanData(scannedValue: string, payload?: Record<string, any>): string {
+  if (payload) return JSON.stringify(payload);
+
+  try {
+    return JSON.stringify(JSON.parse(scannedValue));
+  } catch {
+    return JSON.stringify({ scannedValue });
+  }
 }
 
 export default function ScannerPage() {
@@ -271,6 +281,7 @@ export default function ScannerPage() {
       };
       presentOutcome(failure);
       await addScanToQueue(data, 'fail');
+      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, null);
       await triggerHaptics('error');
       return;
     }
@@ -283,6 +294,7 @@ export default function ScannerPage() {
       };
       presentOutcome(failure);
       await addScanToQueue(jwt, 'fail');
+      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, null);
       await triggerHaptics('error');
       return;
     }
@@ -299,6 +311,13 @@ export default function ScannerPage() {
 
       presentOutcome(verification);
       await addScanToQueue(jwt, verification.status);
+      await addScanHistory(
+        data,
+        serializeScanData(data, verification.payload),
+        verification.status,
+        verification.reason,
+        selectedKey.name,
+      );
       await triggerHaptics(verification.status === 'pass' ? 'success' : 'error');
     } catch {
       const failure: VerificationResult = {
@@ -307,6 +326,7 @@ export default function ScannerPage() {
         reason: 'Could not verify or save this scan',
       };
       presentOutcome(failure);
+      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, selectedKey.name);
       await triggerHaptics('error');
     } finally {
       setIsVerifying(false);

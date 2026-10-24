@@ -18,11 +18,16 @@ const MUTED = '#cbd5e1';
 
 export default function HomePage() {
   return (
-    <Box flex={1} bg="$backgroundDark950" px="$4" py="$6">
-      <VStack space="lg" flex={1} justifyContent="center">
+    <Box flex={1} bg="$backgroundDark950" px="$4" pt="$0" pb="$16" justifyContent="center">
+      <VStack
+        space="lg"
+        width="100%"
+        maxWidth={520}
+        alignSelf="center"
+      >
         <HStack alignItems="center" space="md">
           <Image
-            source={require('../assets/msi.png')}
+            source={require('../assets/msi_white.png')}
             style={{ width: 72, height: 64 }}
             resizeMode="contain"
             accessibilityLabel="VeriFlow logo"

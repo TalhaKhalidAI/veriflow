@@ -21,7 +21,7 @@ export default function RootLayout() {
             <DrawerContentScrollView {...props} contentContainerStyle={styles.drawerContent}>
               <View style={styles.drawerBrand}>
                 <Image
-                  source={require('../assets/msi.png')}
+                  source={require('../assets/msi_white.png')}
                   style={styles.drawerLogo}
                   resizeMode="contain"
                   accessibilityLabel="VeriFlow logo"

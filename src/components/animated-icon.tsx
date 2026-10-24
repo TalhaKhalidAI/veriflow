@@ -104,7 +104,7 @@ export function AnimatedIcon() {
 
       <Animated.View entering={keyframe.duration(DURATION)} style={styles.background} />
       <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
-        <Image style={styles.image} source={require('../assets/msi.png')} contentFit="contain" />
+        <Image style={styles.image} source={require('../assets/msi_white.png')} contentFit="contain" />
       </Animated.View>
     </View>
   );

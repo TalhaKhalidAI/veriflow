@@ -5,23 +5,23 @@ import {
     HStack,
     Input,
     InputField,
+    Pressable,
     ScrollView,
     Text,
     VStack,
 } from '@gluestack-ui/themed';
+import { Pencil, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Image } from 'react-native';
+import { Alert, Image, Modal, StyleSheet, View } from 'react-native';
 
 import {
-    addInventoryItem,
     addPublicKey,
-    deleteInventoryItem,
     deletePublicKey,
-    getInventoryItems,
     getPublicKeys,
     initDatabase,
+    updatePublicKey,
 } from '@/core/db';
-import { InventoryRecord, PublicKeyRecord } from '@/core/types';
+import { PublicKeyRecord } from '@/core/types';
 
 const BLACK = '#07111d';
 const PANEL = '#0f172a';
@@ -30,17 +30,15 @@ const MUTED = '#cbd5e1';
 
 export default function SettingsPage() {
   const [publicKeys, setPublicKeys] = useState<PublicKeyRecord[]>([]);
-  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
-  const [keyName, setKeyName] = useState('Warehouse Key');
+  const [keyName, setKeyName] = useState('');
   const [keyValue, setKeyValue] = useState('');
-  const [inventoryName, setInventoryName] = useState('Warehouse A');
-  const [claimKey, setClaimKey] = useState('warehouse_id');
-  const [expectedValue, setExpectedValue] = useState('WH-01');
+  const [editingKey, setEditingKey] = useState<PublicKeyRecord | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editValue, setEditValue] = useState('');
 
   const refresh = async () => {
     await initDatabase();
     setPublicKeys(await getPublicKeys());
-    setInventory(await getInventoryItems());
   };
 
   useEffect(() => {
@@ -52,16 +50,33 @@ export default function SettingsPage() {
     await addPublicKey(keyName.trim(), keyValue.trim());
     setKeyName('');
     setKeyValue('');
-    refresh();
+    await refresh();
   };
 
-  const saveInventory = async () => {
-    if (!inventoryName.trim() || !claimKey.trim() || !expectedValue.trim()) return;
-    await addInventoryItem(inventoryName.trim(), claimKey.trim(), expectedValue.trim());
-    setInventoryName('');
-    setClaimKey('');
-    setExpectedValue('');
-    refresh();
+  const startEdit = (item: PublicKeyRecord) => {
+    setEditingKey(item);
+    setEditName(item.name);
+    setEditValue(item.public_key_string);
+  };
+
+  const saveEdit = async () => {
+    if (!editingKey || !editName.trim() || !editValue.trim()) return;
+    await updatePublicKey(editingKey.id, editName.trim(), editValue.trim());
+    setEditingKey(null);
+    await refresh();
+  };
+
+  const confirmDelete = (item: PublicKeyRecord) => {
+    Alert.alert('Delete public key?', `“${item.name}” will be removed from this device.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void deletePublicKey(item.id).then(refresh);
+        },
+      },
+    ]);
   };
 
   return (
@@ -70,7 +85,7 @@ export default function SettingsPage() {
         <VStack space="lg">
           <HStack alignItems="center" space="sm">
             <Image
-              source={require('../assets/msi.png')}
+              source={require('../assets/msi_white.png')}
               style={{ width: 46, height: 40 }}
               resizeMode="contain"
               accessibilityLabel="VeriFlow logo"
@@ -81,9 +96,14 @@ export default function SettingsPage() {
           </HStack>
 
           <Box borderWidth={2} borderColor={YELLOW} borderRadius="$xl" bg={PANEL} p="$4">
-            <Text color="#f8fafc" fontSize="$xl" fontWeight="800" mb="$4">
-              Public Keys
-            </Text>
+            <HStack justifyContent="space-between" alignItems="center" mb="$4">
+              <Text color="#f8fafc" fontSize="$xl" fontWeight="800">
+                Key Manager
+              </Text>
+              <Text color={MUTED} fontSize="$xs">
+                {publicKeys.length} {publicKeys.length === 1 ? 'key' : 'keys'}
+              </Text>
+            </HStack>
 
             <VStack space="sm">
               <Input variant="outline" size="lg" borderColor="#334155">
@@ -112,12 +132,27 @@ export default function SettingsPage() {
 
               <Button bg={YELLOW} borderRadius="$lg" onPress={saveKey}>
                 <ButtonText color={BLACK} fontWeight="900">
-                  Add Public Key
+                  Add Key
                 </ButtonText>
               </Button>
             </VStack>
 
-            <VStack mt="$4" space="sm">
+            <VStack mt="$5" space="sm">
+              <HStack
+                alignItems="center"
+                borderBottomWidth={1}
+                borderBottomColor="#334155"
+                pb="$2"
+                px="$2"
+              >
+                <Text color={MUTED} fontSize="$xs" fontWeight="800" flex={1}>
+                  KEY
+                </Text>
+                <Text color={MUTED} fontSize="$xs" fontWeight="800" textAlign="right">
+                  ACTIONS
+                </Text>
+              </HStack>
+
               {publicKeys.map(item => (
                 <HStack
                   key={item.id}
@@ -125,106 +160,121 @@ export default function SettingsPage() {
                   alignItems="center"
                   borderTopWidth={1}
                   borderTopColor="#334155"
-                  pt="$3"
+                  py="$3"
+                  px="$2"
+                  space="sm"
                 >
-                  <VStack flex={1} space="xs">
-                    <Text color="#f8fafc" fontWeight="700">
+                  <VStack flex={1} minWidth={0} space="xs">
+                    <Text color="#f8fafc" fontWeight="700" numberOfLines={1}>
                       {item.name}
                     </Text>
-                    <Text color={MUTED} fontSize="$xs">
-                      {item.public_key_string.slice(0, 36)}...
+                    <Text color={MUTED} fontSize="$xs" numberOfLines={1}>
+                      ID {item.id} · {item.public_key_string.length} characters
                     </Text>
                   </VStack>
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    borderColor="#fca5a5"
-                    onPress={() => deletePublicKey(item.id).then(refresh)}
-                  >
-                    <ButtonText color="#fca5a5">Delete</ButtonText>
-                  </Button>
+                  <HStack space="sm" alignItems="center">
+                    <Pressable
+                      onPress={() => startEdit(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit ${item.name}`}
+                      hitSlop={8}
+                      style={styles.iconButton}
+                    >
+                      <Pencil size={19} color={YELLOW} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => confirmDelete(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${item.name}`}
+                      hitSlop={8}
+                      style={styles.iconButton}
+                    >
+                      <Trash2 size={19} color="#fca5a5" />
+                    </Pressable>
+                  </HStack>
                 </HStack>
               ))}
+              {!publicKeys.length ? (
+                <Text color={MUTED} fontSize="$sm" py="$4" textAlign="center">
+                  No keys saved yet.
+                </Text>
+              ) : null}
             </VStack>
           </Box>
+        </VStack>
+      </Box>
 
-          <Box borderWidth={2} borderColor={YELLOW} borderRadius="$xl" bg={PANEL} p="$4">
+      <Modal
+        visible={Boolean(editingKey)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingKey(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setEditingKey(null)}
+            accessibilityLabel="Close edit dialog"
+          />
+          <Box width="100%" maxWidth={520} bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$4">
             <Text color="#f8fafc" fontSize="$xl" fontWeight="800" mb="$4">
-              Inventory Rules
+              Edit Public Key
             </Text>
 
             <VStack space="sm">
               <Input variant="outline" size="lg" borderColor="#334155">
                 <InputField
-                  value={inventoryName}
-                  onChangeText={setInventoryName}
-                  placeholder="Inventory name"
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Key name"
                   placeholderTextColor="#94a3b8"
                   color="#f8fafc"
                 />
               </Input>
-
               <Input variant="outline" size="lg" borderColor="#334155">
                 <InputField
-                  value={claimKey}
-                  onChangeText={setClaimKey}
-                  placeholder="Claim key"
+                  value={editValue}
+                  onChangeText={setEditValue}
+                  placeholder="Public key PEM"
                   placeholderTextColor="#94a3b8"
                   color="#f8fafc"
+                  multiline
+                  numberOfLines={6}
+                  textAlignVertical="top"
+                  minHeight={140}
                 />
               </Input>
-
-              <Input variant="outline" size="lg" borderColor="#334155">
-                <InputField
-                  value={expectedValue}
-                  onChangeText={setExpectedValue}
-                  placeholder="Expected value"
-                  placeholderTextColor="#94a3b8"
-                  color="#f8fafc"
-                />
-              </Input>
-
-              <Button bg={YELLOW} borderRadius="$lg" onPress={saveInventory}>
-                <ButtonText color={BLACK} fontWeight="900">
-                  Add Inventory Rule
-                </ButtonText>
-              </Button>
-            </VStack>
-
-            <VStack mt="$4" space="sm">
-              {inventory.map(item => (
-                <HStack
-                  key={item.id}
-                  justifyContent="space-between"
-                  alignItems="center"
-                  borderTopWidth={1}
-                  borderTopColor="#334155"
-                  pt="$3"
-                >
-                  <VStack flex={1} space="xs">
-                    <Text color="#f8fafc" fontWeight="700">
-                      {item.inventory_name}
-                    </Text>
-                    <Text color={MUTED} fontSize="$xs">
-                      {item.matching_claim_key} = {item.expected_value}
-                    </Text>
-                  </VStack>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    borderColor="#fca5a5"
-                    onPress={() => deleteInventoryItem(item.id).then(refresh)}
-                  >
-                    <ButtonText color="#fca5a5">Delete</ButtonText>
-                  </Button>
-                </HStack>
-              ))}
+              <HStack space="sm" justifyContent="flex-end" mt="$2">
+                <Button variant="outline" borderColor="#64748b" onPress={() => setEditingKey(null)}>
+                  <ButtonText color="#e2e8f0">Cancel</ButtonText>
+                </Button>
+                <Button bg={YELLOW} onPress={saveEdit}>
+                  <ButtonText color={BLACK} fontWeight="900">Save Changes</ButtonText>
+                </Button>
+              </HStack>
             </VStack>
           </Box>
-        </VStack>
-      </Box>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111c2e',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 23, 0.76)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+});

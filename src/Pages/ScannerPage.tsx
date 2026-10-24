@@ -318,7 +318,7 @@ export default function ScannerPage() {
       <VStack space="sm" flex={1}>
         <HStack alignItems="center" space="sm">
           <Image
-            source={require('../assets/msi.png')}
+            source={require('../assets/msi_white.png')}
             style={{ width: 48, height: 42 }}
             resizeMode="contain"
             accessibilityLabel="VeriFlow logo"

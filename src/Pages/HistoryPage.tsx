@@ -10,7 +10,8 @@ import {
     Text,
     VStack,
 } from '@gluestack-ui/themed';
-import { Pencil, Trash2 } from 'lucide-react-native';
+// Added RefreshCw to the imports
+import { Pencil, RefreshCw, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Alert, Image, Modal, StyleSheet, View } from 'react-native';
 
@@ -62,16 +63,24 @@ export default function HistoryPage() {
   const [editingRemark, setEditingRemark] = useState<{ fieldId: number; remark: ScanRemarkRecord | null } | null>(null);
   const [remarkDraft, setRemarkDraft] = useState('');
   const [remarkError, setRemarkError] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false); // Added loading state
 
   const refresh = async () => {
-    await initDatabase();
-    const history = await getScanHistory();
-    const fieldEntries = await Promise.all(history.map(async record => [
-      record.id,
-      await getScanDataFields(record.id),
-    ] as const));
-    setRecords(history);
-    setFieldsByRecord(Object.fromEntries(fieldEntries));
+    setIsRefreshing(true);
+    try {
+      await initDatabase();
+      const history = await getScanHistory();
+      const fieldEntries = await Promise.all(history.map(async record => [
+        record.id,
+        await getScanDataFields(record.id),
+      ] as const));
+      setRecords(history);
+      setFieldsByRecord(Object.fromEntries(fieldEntries));
+    } catch (error) {
+      console.error("Failed to refresh history", error);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   useEffect(() => {
@@ -167,6 +176,19 @@ export default function HistoryPage() {
                 {records.length} {records.length === 1 ? 'record' : 'records'} stored on this device
               </Text>
             </VStack>
+            
+            {/* NEW REFRESH BUTTON */}
+            <Pressable
+              onPress={refresh}
+              style={styles.iconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh scan history"
+              hitSlop={8}
+              disabled={isRefreshing}
+            >
+              <RefreshCw size={20} color={isRefreshing ? MUTED : YELLOW} />
+            </Pressable>
+
           </HStack>
 
           <Box borderWidth={2} borderColor={YELLOW} borderRadius="$xl" bg={PANEL} p="$3">

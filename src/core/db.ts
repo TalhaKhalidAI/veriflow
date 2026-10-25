@@ -547,3 +547,24 @@ export function deleteScanRemarkFromField(fieldId: number, remarkId: number): Pr
   });
   return Promise.resolve();
 }
+// src/core/db.ts
+
+export async function checkScanExists(scannedValue: string): Promise<boolean> {
+  if (!db) {
+    // Memory fallback
+    return memoryStore.scanHistory.some(item => item.scanned_value === scannedValue);
+  }
+
+  try {
+    // Using the sync API since your entire file relies on it
+    const result = dbAny.getFirstSync(
+      'SELECT COUNT(*) as count FROM scan_history WHERE scanned_value = ?', 
+      [scannedValue]
+    ) as { count: number } | null;
+    
+    return (result?.count ?? 0) > 0;
+  } catch (error) {
+    console.error("❌ checkScanExists query failed:", error);
+    return false; 
+  }
+}

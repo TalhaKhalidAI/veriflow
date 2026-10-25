@@ -33,7 +33,7 @@ export function AnimatedSplashOverlay() {
     },
   });
 
-  const image = <Image style={styles.splashLogo} source={require('../assets/title1.png')} contentFit="contain" />;
+  const image = <Image style={styles.splashLogo} source={require('../assets/splash_white.png')} contentFit="contain" />;
 
   return animate ? (
     <Animated.View
@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
   },
   splashOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#07111d',
+    backgroundColor: '#fcfdff',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1000,

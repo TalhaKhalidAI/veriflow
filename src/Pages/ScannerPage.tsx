@@ -32,17 +32,20 @@ try {
   Haptics = null;
 }
 
-import { addScanHistory, addScanToQueue, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
+import { addScanHistory, addScanToQueue, checkScanExists, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
 import { verifyJwtAgainstPublicKey } from '@/core/jwt';
 import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '@/core/types';
 
 const PASS_COLOR = '#22c55e';
 const FAIL_COLOR = '#ef4444';
+const ORANGE_COLOR = '#f97316'; 
 const YELLOW = '#facc15';
 const BLACK = '#07111d';
 const PANEL = '#0f172a';
 const PANEL_ALT = '#0b1220';
 const SCAN_NOTIFICATION_CHANNEL = 'scan-results';
+
+type ExtendedResult = VerificationResult & { isDuplicate?: boolean };
 
 type NotificationsModule = typeof import('expo-notifications');
 let notificationsModule: NotificationsModule | null = null;
@@ -62,7 +65,7 @@ try {
   notificationsModule = null;
 }
 
-async function notifyScanResult(result: VerificationResult) {
+async function notifyScanResult(result: ExtendedResult) {
   if (!notificationsModule) return;
 
   try {
@@ -128,9 +131,9 @@ export default function ScannerPage() {
   const [publicKeys, setPublicKeys] = useState<PublicKeyRecord[]>([]);
   const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
-  const [result, setResult] = useState<VerificationResult | null>(null);
-  const [splashResult, setSplashResult] = useState<VerificationResult | null>(null);
-  const [toastResult, setToastResult] = useState<VerificationResult | null>(null);
+  const [result, setResult] = useState<ExtendedResult | null>(null);
+  const [splashResult, setSplashResult] = useState<ExtendedResult | null>(null);
+  const [toastResult, setToastResult] = useState<ExtendedResult | null>(null);
   const [statusMessage, setStatusMessage] = useState('Ready for scan');
   const [cameraActive, setCameraActive] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
@@ -171,15 +174,19 @@ export default function ScannerPage() {
     [publicKeys, selectedKeyId],
   );
 
-  const presentOutcome = (outcome: VerificationResult) => {
-    setResult(outcome);
+  const presentOutcome = (outcome: ExtendedResult, isDuplicate: boolean = false) => {
+    const finalOutcome = { ...outcome, isDuplicate };
+    setResult(finalOutcome);
+    
     if (uiModeRef.current === 'PASS_FAIL_MODE') {
-      setStatusMessage(outcome.reason);
-      setSplashResult(outcome);
+      setStatusMessage(isDuplicate ? 'Duplicate entry ignored.' : finalOutcome.reason);
+      setSplashResult(finalOutcome);
       setToastResult(null);
-      void notifyScanResult(outcome);
+      if (!isDuplicate) {
+        void notifyScanResult(finalOutcome);
+      }
     } else {
-      setStatusMessage(outcome.payload ? 'Scan complete. Review the decoded payload.' : 'Scan complete. No payload available.');
+      setStatusMessage(isDuplicate ? '⚠️ Duplicate entry detected.' : (finalOutcome.payload ? 'Scan complete. Review the decoded payload.' : 'Scan complete. No payload available.'));
     }
   };
 
@@ -188,11 +195,10 @@ export default function ScannerPage() {
     setUiMode(mode);
   };
 
+  // ONLY clear the splash/toast if the user MANUALLY changes the tab
   useEffect(() => {
-    if (uiMode === 'DATA_MODE') {
-      setSplashResult(null);
-      setToastResult(null);
-    }
+    setSplashResult(null);
+    setToastResult(null);
   }, [uiMode]);
 
   useEffect(() => {
@@ -215,9 +221,7 @@ export default function ScannerPage() {
   }, [toastResult]);
 
   const triggerHaptics = async (type: 'success' | 'error') => {
-    if (!Haptics || !Haptics.notificationAsync) {
-      return;
-    }
+    if (!Haptics || !Haptics.notificationAsync) return;
 
     try {
       const feedbackType = type === 'success'
@@ -265,6 +269,40 @@ export default function ScannerPage() {
     setStatusMessage('Point the camera at a signed QR code');
   };
 
+  // FIXED: Checks the JWT string instead of the raw QR data
+  const safeSaveToHistory = async (
+    rawData: string, 
+    jwt: string | null, 
+    verification: VerificationResult, 
+    keyName: string | null
+  ): Promise<boolean> => {
+    try {
+      // Use the JWT as the unique identifier to prevent URL formatting bypasses
+      const uniqueId = jwt ? jwt.trim() : rawData.trim();
+      
+      const isDuplicate = await checkScanExists(uniqueId);
+      if (isDuplicate) {
+        console.log("⚠️ Duplicate scan ignored.");
+        return true; 
+      }
+
+      await addScanToQueue(uniqueId, verification.status);
+      await addScanHistory(
+        uniqueId, 
+        serializeScanData(rawData, verification.payload),
+        verification.status,
+        verification.reason,
+        keyName,
+      );
+      console.log("✅ Scan saved to history successfully.");
+      return false;
+    } catch (error) {
+      console.error("❌ Failed to save scan to history:", error);
+      setStatusMessage("Error saving to history. Check console.");
+      return false;
+    }
+  };
+
   const handleBarcodeScanned = async ({ data }: BarcodeScanningResult) => {
     if (scanLocked.current) return;
     scanLocked.current = true;
@@ -279,9 +317,8 @@ export default function ScannerPage() {
         status: 'fail',
         reason: 'QR code does not contain valid signed data',
       };
-      presentOutcome(failure);
-      await addScanToQueue(data, 'fail');
-      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, null);
+      const isDuplicate = await safeSaveToHistory(data, null, failure, null);
+      presentOutcome(failure, isDuplicate);
       await triggerHaptics('error');
       return;
     }
@@ -292,9 +329,8 @@ export default function ScannerPage() {
         status: 'fail',
         reason: 'No public key selected',
       };
-      presentOutcome(failure);
-      await addScanToQueue(jwt, 'fail');
-      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, null);
+      const isDuplicate = await safeSaveToHistory(data, jwt, failure, null);
+      presentOutcome(failure, isDuplicate);
       await triggerHaptics('error');
       return;
     }
@@ -309,15 +345,9 @@ export default function ScannerPage() {
         inventoryMatch?.expected_value,
       );
 
-      presentOutcome(verification);
-      await addScanToQueue(jwt, verification.status);
-      await addScanHistory(
-        data,
-        serializeScanData(data, verification.payload),
-        verification.status,
-        verification.reason,
-        selectedKey.name,
-      );
+      const isDuplicate = await safeSaveToHistory(data, jwt, verification, selectedKey.name);
+      presentOutcome(verification, isDuplicate);
+      
       await triggerHaptics(verification.status === 'pass' ? 'success' : 'error');
     } catch {
       const failure: VerificationResult = {
@@ -325,12 +355,23 @@ export default function ScannerPage() {
         status: 'fail',
         reason: 'Could not verify or save this scan',
       };
-      presentOutcome(failure);
-      await addScanHistory(data, serializeScanData(data), 'fail', failure.reason, selectedKey.name);
+      const isDuplicate = await safeSaveToHistory(data, jwt, failure, selectedKey.name);
+      presentOutcome(failure, isDuplicate);
       await triggerHaptics('error');
     } finally {
       setIsVerifying(false);
     }
+  };
+
+  const getSplashBgColor = (res: ExtendedResult | null) => {
+    if (!res) return PASS_COLOR;
+    if (res.isDuplicate) return ORANGE_COLOR;
+    return res.status === 'pass' ? PASS_COLOR : FAIL_COLOR;
+  };
+
+  const getToastBorderColor = (res: ExtendedResult) => {
+    if (res.isDuplicate) return ORANGE_COLOR;
+    return res.status === 'pass' ? PASS_COLOR : FAIL_COLOR;
   };
 
   return (
@@ -473,9 +514,23 @@ export default function ScannerPage() {
           </Box>
         ) : (
           <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$3" flex={1} minHeight={0}>
-            <Text color={YELLOW} fontSize="$lg" fontWeight="800" mb="$2">
-              Decoded payload
-            </Text>
+            <HStack justifyContent="space-between" alignItems="center" mb="$2">
+              <Text color={YELLOW} fontSize="$lg" fontWeight="800">
+                Decoded payload
+              </Text>
+              
+              {result && (
+                <Text 
+                  color={result.isDuplicate ? ORANGE_COLOR : (result.status === 'pass' ? PASS_COLOR : FAIL_COLOR)} 
+                  fontWeight="900" 
+                  fontSize="$sm"
+                >
+                  {result.isDuplicate 
+                    ? '⚠️ DUPLICATE ENTRY' 
+                    : (result.status === 'pass' ? '✅ SAVED (PASS)' : '❌ SAVED (FAIL)')}
+                </Text>
+              )}
+            </HStack>
             <ScrollView flex={1}>
               <Text color="#e2e8f0" fontSize="$xs" lineHeight={20}>
                 {result?.payload ? JSON.stringify(result.payload, null, 2) : '{\n  "status": "waiting for scan"\n}'}
@@ -490,17 +545,17 @@ export default function ScannerPage() {
           <Box
             bg={PANEL}
             borderWidth={2}
-            borderColor={toastResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
+            borderColor={getToastBorderColor(toastResult)}
             borderRadius="$lg"
             px="$4"
             py="$3"
           >
             <HStack justifyContent="space-between" alignItems="center" space="md">
-              <Text color={toastResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR} fontWeight="900">
-                {toastResult.status === 'pass' ? 'PASS' : 'FAIL'}
+              <Text color={getToastBorderColor(toastResult)} fontWeight="900">
+                {toastResult.isDuplicate ? 'DUPLICATE' : (toastResult.status === 'pass' ? 'PASS' : 'FAIL')}
               </Text>
               <Text color="#f8fafc" flex={1} numberOfLines={2}>
-                {toastResult.reason}
+                {toastResult.isDuplicate ? 'Entry already exists in history.' : toastResult.reason}
               </Text>
               <Text color="#cbd5e1" fontSize="$lg">×</Text>
             </HStack>
@@ -565,19 +620,21 @@ export default function ScannerPage() {
         {splashResult ? (
           <Box
             flex={1}
-            bg={splashResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
+            bg={getSplashBgColor(splashResult)}
             alignItems="center"
             justifyContent="center"
             px="$6"
           >
             <Text color="#ffffff" fontSize="$6xl" fontWeight="900" textAlign="center">
-              {splashResult.status === 'pass' ? 'PASS' : 'FAIL'}
+              {splashResult.isDuplicate ? 'DUPLICATE' : (splashResult.status === 'pass' ? 'PASS' : 'FAIL')}
             </Text>
             <Text color="#ffffff" fontSize="$xl" fontWeight="800" textAlign="center" mt="$3">
-              {splashResult.status === 'pass' ? 'THIS VERIFICATION PASSED' : 'THIS VERIFICATION FAILED'}
+              {splashResult.isDuplicate 
+                ? 'ENTRY ALREADY EXISTS' 
+                : (splashResult.status === 'pass' ? 'THIS VERIFICATION PASSED' : 'THIS VERIFICATION FAILED')}
             </Text>
             <Text color="#ffffff" fontSize="$md" textAlign="center" mt="$4">
-              {splashResult.reason}
+              {splashResult.isDuplicate ? 'This QR code has already been scanned.' : splashResult.reason}
             </Text>
           </Box>
         ) : null}

@@ -32,9 +32,9 @@ try {
   Haptics = null;
 }
 
-import { addScanHistory, addScanToQueue, checkScanExists, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
+import { addScanHistory, addScanToQueue, getInventoryItems, getPublicKeys, getScanRecord, initDatabase, updateScanHistoryStatus } from '@/core/db';
 import { verifyJwtAgainstPublicKey } from '@/core/jwt';
-import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '@/core/types';
+import { InventoryRecord, PublicKeyRecord, ScanHistoryRecord, UiMode, VerificationResult } from '@/core/types';
 
 const PASS_COLOR = '#22c55e';
 const FAIL_COLOR = '#ef4444';
@@ -45,7 +45,11 @@ const PANEL = '#0f172a';
 const PANEL_ALT = '#0b1220';
 const SCAN_NOTIFICATION_CHANNEL = 'scan-results';
 
-type ExtendedResult = VerificationResult & { isDuplicate?: boolean };
+// Extend the VerificationResult to handle phases and duplicates
+type ExtendedResult = VerificationResult & { 
+  isDuplicate?: boolean;
+  phase?: 1 | 2;
+};
 
 type NotificationsModule = typeof import('expo-notifications');
 let notificationsModule: NotificationsModule | null = null;
@@ -86,8 +90,8 @@ async function notifyScanResult(result: ExtendedResult) {
 
     await notificationsModule.scheduleNotificationAsync({
       content: {
-        title: result.status === 'pass' ? 'Verification passed' : 'Verification failed',
-        body: result.reason,
+        title: result.isDuplicate ? 'Duplicate Scan' : (result.status === 'pass' ? 'Verification passed' : 'Verification failed'),
+        body: result.isDuplicate ? 'Entry already exists in DB.' : result.reason,
         sound: true,
         data: { status: result.status },
       },
@@ -132,8 +136,15 @@ export default function ScannerPage() {
   const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
   const [result, setResult] = useState<ExtendedResult | null>(null);
+  
+  // Splash and Toast States for Pass/Fail Mode
   const [splashResult, setSplashResult] = useState<ExtendedResult | null>(null);
   const [toastResult, setToastResult] = useState<ExtendedResult | null>(null);
+  
+  // Duplicate Modal State for Data Mode
+  const [duplicateRecord, setDuplicateRecord] = useState<ScanHistoryRecord | null>(null);
+  const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
+
   const [statusMessage, setStatusMessage] = useState('Ready for scan');
   const [cameraActive, setCameraActive] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
@@ -174,19 +185,18 @@ export default function ScannerPage() {
     [publicKeys, selectedKeyId],
   );
 
-  const presentOutcome = (outcome: ExtendedResult, isDuplicate: boolean = false) => {
-    const finalOutcome = { ...outcome, isDuplicate };
-    setResult(finalOutcome);
+  const presentOutcome = (outcome: ExtendedResult) => {
+    setResult(outcome);
     
     if (uiModeRef.current === 'PASS_FAIL_MODE') {
-      setStatusMessage(isDuplicate ? 'Duplicate entry ignored.' : finalOutcome.reason);
-      setSplashResult(finalOutcome);
+      setStatusMessage(outcome.isDuplicate ? 'Duplicate entry ignored.' : outcome.reason);
+      setSplashResult(outcome);
       setToastResult(null);
-      if (!isDuplicate) {
-        void notifyScanResult(finalOutcome);
+      if (!outcome.isDuplicate) {
+        void notifyScanResult(outcome);
       }
     } else {
-      setStatusMessage(isDuplicate ? '⚠️ Duplicate entry detected.' : (finalOutcome.payload ? 'Scan complete. Review the decoded payload.' : 'Scan complete. No payload available.'));
+      setStatusMessage(outcome.isDuplicate ? '⚠️ Duplicate entry detected.' : (outcome.payload ? 'Scan complete. Review the decoded payload.' : 'Scan complete. No payload available.'));
     }
   };
 
@@ -195,7 +205,6 @@ export default function ScannerPage() {
     setUiMode(mode);
   };
 
-  // ONLY clear the splash/toast if the user MANUALLY changes the tab
   useEffect(() => {
     setSplashResult(null);
     setToastResult(null);
@@ -203,34 +212,28 @@ export default function ScannerPage() {
 
   useEffect(() => {
     if (!splashResult) return;
-
     const timeout = setTimeout(() => {
       setSplashResult(null);
       setToastResult(splashResult);
       setStatusMessage('Ready for scan');
     }, 5500);
-
     return () => clearTimeout(timeout);
   }, [splashResult]);
 
   useEffect(() => {
     if (!toastResult) return;
-
     const timeout = setTimeout(() => setToastResult(null), 4000);
     return () => clearTimeout(timeout);
   }, [toastResult]);
 
   const triggerHaptics = async (type: 'success' | 'error') => {
     if (!Haptics || !Haptics.notificationAsync) return;
-
     try {
       const feedbackType = type === 'success'
         ? Haptics.NotificationFeedbackType.Success
         : Haptics.NotificationFeedbackType.Error;
       await Haptics.notificationAsync(feedbackType);
-    } catch {
-      return;
-    }
+    } catch {}
   };
 
   const openKeyPicker = async () => {
@@ -269,40 +272,6 @@ export default function ScannerPage() {
     setStatusMessage('Point the camera at a signed QR code');
   };
 
-  // FIXED: Checks the JWT string instead of the raw QR data
-  const safeSaveToHistory = async (
-    rawData: string, 
-    jwt: string | null, 
-    verification: VerificationResult, 
-    keyName: string | null
-  ): Promise<boolean> => {
-    try {
-      // Use the JWT as the unique identifier to prevent URL formatting bypasses
-      const uniqueId = jwt ? jwt.trim() : rawData.trim();
-      
-      const isDuplicate = await checkScanExists(uniqueId);
-      if (isDuplicate) {
-        console.log("⚠️ Duplicate scan ignored.");
-        return true; 
-      }
-
-      await addScanToQueue(uniqueId, verification.status);
-      await addScanHistory(
-        uniqueId, 
-        serializeScanData(rawData, verification.payload),
-        verification.status,
-        verification.reason,
-        keyName,
-      );
-      console.log("✅ Scan saved to history successfully.");
-      return false;
-    } catch (error) {
-      console.error("❌ Failed to save scan to history:", error);
-      setStatusMessage("Error saving to history. Check console.");
-      return false;
-    }
-  };
-
   const handleBarcodeScanned = async ({ data }: BarcodeScanningResult) => {
     if (scanLocked.current) return;
     scanLocked.current = true;
@@ -310,224 +279,170 @@ export default function ScannerPage() {
     setHasScanned(true);
 
     const jwt = extractJwt(data)?.trim() ?? null;
+    const uniqueId = jwt ? jwt.trim() : data.trim();
+
+    // --- PHASE 1: CRYPTOGRAPHIC VERIFICATION ---
+    let phase1Result: ExtendedResult = { valid: false, status: 'fail', reason: 'Unknown error', phase: 1 };
 
     if (!jwt) {
-      const failure: VerificationResult = {
-        valid: false,
-        status: 'fail',
-        reason: 'QR code does not contain valid signed data',
-      };
-      const isDuplicate = await safeSaveToHistory(data, null, failure, null);
-      presentOutcome(failure, isDuplicate);
+      phase1Result.reason = 'QR does not contain a valid signed JWT';
+      phase1Result.isDuplicate = false;
+    } else if (!selectedKey) {
+      phase1Result.reason = 'No public key selected';
+      phase1Result.isDuplicate = false;
+    } else {
+      setIsVerifying(true);
+      try {
+        const inventoryMatch = inventory[0];
+        const verification = await verifyJwtAgainstPublicKey(
+          jwt,
+          selectedKey.public_key_string,
+          inventoryMatch?.matching_claim_key,
+          inventoryMatch?.expected_value,
+        );
+        phase1Result = { ...verification, phase: 1 };
+      } catch (err: any) {
+        phase1Result.reason = err.message || 'Signature verification failed';
+      } finally {
+        setIsVerifying(false);
+      }
+    }
+
+    // If Phase 1 fails, we save the failure and show exact error
+    if (phase1Result.status === 'fail') {
+      const existing = await getScanRecord(uniqueId);
+      let isDup = false;
+      if (existing) {
+        isDup = true; // Already failed before
+      } else {
+        await addScanToQueue(uniqueId, 'fail');
+        await addScanHistory(uniqueId, serializeScanData(data, phase1Result.payload), 'fail', phase1Result.reason, selectedKey?.name || null);
+      }
+      presentOutcome({ ...phase1Result, isDuplicate: isDup });
       await triggerHaptics('error');
       return;
     }
 
-    if (!selectedKey) {
-      const failure: VerificationResult = {
-        valid: false,
-        status: 'fail',
-        reason: 'No public key selected',
-      };
-      const isDuplicate = await safeSaveToHistory(data, jwt, failure, null);
-      presentOutcome(failure, isDuplicate);
-      await triggerHaptics('error');
-      return;
+    // --- PHASE 2: DUPLICATE CHECK ---
+    const existingRecord = await getScanRecord(uniqueId);
+    let isDuplicate = false;
+
+    if (existingRecord) {
+      if (existingRecord.status === 'pass') {
+        isDuplicate = true; 
+      } else if (existingRecord.status === 'fail') {
+        // It failed previously (e.g. wrong key), but now passes. UPDATE to PASS!
+        await updateScanHistoryStatus(existingRecord.id, 'pass', 'Passed on retry with correct key');
+        isDuplicate = false; 
+      }
+    } else {
+      // Brand new scan, save it
+      await addScanToQueue(uniqueId, 'pass');
+      await addScanHistory(uniqueId, serializeScanData(data, phase1Result.payload), 'pass', phase1Result.reason, selectedKey?.name || null);
     }
 
-    setIsVerifying(true);
-    try {
-      const inventoryMatch = inventory[0];
-      const verification = await verifyJwtAgainstPublicKey(
-        jwt,
-        selectedKey.public_key_string,
-        inventoryMatch?.matching_claim_key,
-        inventoryMatch?.expected_value,
-      );
-
-      const isDuplicate = await safeSaveToHistory(data, jwt, verification, selectedKey.name);
-      presentOutcome(verification, isDuplicate);
-      
-      await triggerHaptics(verification.status === 'pass' ? 'success' : 'error');
-    } catch {
-      const failure: VerificationResult = {
-        valid: false,
-        status: 'fail',
-        reason: 'Could not verify or save this scan',
-      };
-      const isDuplicate = await safeSaveToHistory(data, jwt, failure, selectedKey.name);
-      presentOutcome(failure, isDuplicate);
-      await triggerHaptics('error');
-    } finally {
-      setIsVerifying(false);
+    const finalOutcome: ExtendedResult = { ...phase1Result, isDuplicate, phase: 2 };
+    presentOutcome(finalOutcome);
+    
+    // If in Data Mode and it's a duplicate, show the modal with existing DB data
+    if (isDuplicate && uiModeRef.current === 'DATA_MODE' && existingRecord) {
+      setDuplicateRecord(existingRecord);
+      setDuplicateModalVisible(true);
     }
+
+    await triggerHaptics(finalOutcome.isDuplicate ? 'error' : 'success');
   };
 
+  // Helper colors
   const getSplashBgColor = (res: ExtendedResult | null) => {
     if (!res) return PASS_COLOR;
-    if (res.isDuplicate) return ORANGE_COLOR;
-    return res.status === 'pass' ? PASS_COLOR : FAIL_COLOR;
+    if (res.phase === 1) return FAIL_COLOR; // Phase 1 fail = Red
+    if (res.isDuplicate) return ORANGE_COLOR; // Phase 2 duplicate = Orange
+    return PASS_COLOR; // Phase 2 pass = Green
   };
 
   const getToastBorderColor = (res: ExtendedResult) => {
+    if (res.phase === 1) return FAIL_COLOR;
     if (res.isDuplicate) return ORANGE_COLOR;
-    return res.status === 'pass' ? PASS_COLOR : FAIL_COLOR;
+    return PASS_COLOR;
   };
 
   return (
     <Box flex={1} bg={BLACK} px="$4" pt="$2" pb="$2">
       <VStack space="sm" flex={1}>
+        {/* Header */}
         <HStack alignItems="center" space="sm">
-          <Image
-            source={require('../assets/msi_white.png')}
-            style={{ width: 48, height: 42 }}
-            resizeMode="contain"
-            accessibilityLabel="VeriFlow logo"
-          />
+          <Image source={require('../assets/msi_white.png')} style={{ width: 48, height: 42 }} resizeMode="contain" />
           <VStack space="xs" flex={1}>
-            <Heading size="lg" color={YELLOW} fontWeight="900">
-              VeriFlow
-            </Heading>
-            <Text color="#e2e8f0" fontSize="$xs">
-              Industrial Offline Scanner
-            </Text>
+            <Heading size="lg" color={YELLOW} fontWeight="900">VeriFlow</Heading>
+            <Text color="#e2e8f0" fontSize="$xs">Industrial Offline Scanner</Text>
           </VStack>
         </HStack>
 
+        {/* Tabs */}
         <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$2">
           <HStack bg={PANEL_ALT} borderRadius="$lg" overflow="hidden" borderWidth={1} borderColor={YELLOW}>
-            <Pressable
-              flex={1}
-              py="$2"
-              alignItems="center"
-              bg={uiMode === 'PASS_FAIL_MODE' ? YELLOW : PANEL_ALT}
-              onPress={() => changeUiMode('PASS_FAIL_MODE')}
-            >
-              <Text color={uiMode === 'PASS_FAIL_MODE' ? BLACK : '#f8fafc'} fontWeight="800">
-                Pass / Fail
-              </Text>
+            <Pressable flex={1} py="$2" alignItems="center" bg={uiMode === 'PASS_FAIL_MODE' ? YELLOW : PANEL_ALT} onPress={() => changeUiMode('PASS_FAIL_MODE')}>
+              <Text color={uiMode === 'PASS_FAIL_MODE' ? BLACK : '#f8fafc'} fontWeight="800">Pass / Fail</Text>
             </Pressable>
-            <Pressable
-              flex={1}
-              py="$2"
-              alignItems="center"
-              bg={uiMode === 'DATA_MODE' ? YELLOW : PANEL_ALT}
-              onPress={() => changeUiMode('DATA_MODE')}
-            >
-              <Text color={uiMode === 'DATA_MODE' ? BLACK : '#f8fafc'} fontWeight="800">
-                Data
-              </Text>
+            <Pressable flex={1} py="$2" alignItems="center" bg={uiMode === 'DATA_MODE' ? YELLOW : PANEL_ALT} onPress={() => changeUiMode('DATA_MODE')}>
+              <Text color={uiMode === 'DATA_MODE' ? BLACK : '#f8fafc'} fontWeight="800">Data</Text>
             </Pressable>
           </HStack>
         </Box>
 
+        {/* Scanner Area */}
         <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$3">
-          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mb="$1">
-            Verification key
-          </Text>
-
+          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mb="$1">Verification key</Text>
           <Pressable onPress={openKeyPicker}>
-            <Box
-              bg={PANEL_ALT}
-              borderWidth={1}
-              borderColor="#334155"
-              borderRadius="$lg"
-              px="$3"
-              py="$2"
-              flexDirection="row"
-              justifyContent="space-between"
-              alignItems="center"
-            >
+            <Box bg={PANEL_ALT} borderWidth={1} borderColor="#334155" borderRadius="$lg" px="$3" py="$2" flexDirection="row" justifyContent="space-between" alignItems="center">
               <Text color="#f8fafc" fontSize="$md" fontWeight="700" numberOfLines={1} flex={1}>
                 {selectedKey ? selectedKey.name : 'Choose a public key'}
               </Text>
-              <Text color={YELLOW} fontSize="$2xl" fontWeight="900">
-                ⌄
-              </Text>
+              <Text color={YELLOW} fontSize="$2xl" fontWeight="900">⌄</Text>
             </Box>
           </Pressable>
 
-          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mt="$2" mb="$1">
-            QR scanner
-          </Text>
-
+          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mt="$2" mb="$1">QR scanner</Text>
           <Box h={cameraPreviewHeight} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" overflow="hidden" bg="#050914">
             {cameraActive && permission?.granted && !hasScanned && CameraView ? (
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                facing="back"
-                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                onBarcodeScanned={handleBarcodeScanned}
-                onMountError={() => setStatusMessage('Could not start the camera')}
-              />
+              <CameraView style={StyleSheet.absoluteFill} facing="back" barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={handleBarcodeScanned} />
             ) : (
               <VStack flex={1} alignItems="center" justifyContent="center" px="$4">
                 <Text color="#f8fafc" fontSize="$xl" fontWeight="900" textAlign="center">
                   {hasScanned ? 'QR code captured' : CameraView ? 'Camera ready' : 'Camera unavailable'}
                 </Text>
-                <Text color="#cbd5e1" fontSize="$sm" textAlign="center" mt="$2">
-                  {hasScanned
-                    ? 'Review the verification result below.'
-                    : CameraView
-                      ? 'Scan a signed QR code.'
-                      : 'Rebuild the Android app to enable QR scanning.'}
-                </Text>
               </VStack>
             )}
           </Box>
 
-          <Button
-            mt="$2"
-            bg={YELLOW}
-            borderRadius="$lg"
-            onPress={startCamera}
-            isDisabled={isVerifying || !CameraView}
-          >
+          <Button mt="$2" bg={YELLOW} borderRadius="$lg" onPress={startCamera} isDisabled={isVerifying || !CameraView}>
             <ButtonText color={BLACK} fontWeight="900">
               {isVerifying ? 'Verifying...' : hasScanned ? 'Scan another QR' : 'Start QR scanner'}
             </ButtonText>
           </Button>
-
-          <Text color="#dbeafe" fontSize="$xs" mt="$2" numberOfLines={2}>
-            {statusMessage}
-          </Text>
+          <Text color="#dbeafe" fontSize="$xs" mt="$2" numberOfLines={2}>{statusMessage}</Text>
         </Box>
 
+        {/* Result Display */}
         {uiMode === 'PASS_FAIL_MODE' ? (
-          <Box
-            bg={PANEL}
-            borderWidth={3}
-            borderColor={YELLOW}
-            borderRadius="$2xl"
-            minHeight={96}
-            maxHeight={136}
-            p="$3"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text color={YELLOW} fontSize="$3xl" fontWeight="900" letterSpacing={2}>
-              READY
-            </Text>
-            <Text color="#cbd5e1" fontSize="$md" textAlign="center" mt="$2">
-              Awaiting scan result
-            </Text>
+          <Box bg={PANEL} borderWidth={3} borderColor={YELLOW} borderRadius="$2xl" minHeight={96} maxHeight={136} p="$3" alignItems="center" justifyContent="center">
+            <Text color={YELLOW} fontSize="$3xl" fontWeight="900" letterSpacing={2}>READY</Text>
+            <Text color="#cbd5e1" fontSize="$md" textAlign="center" mt="$2">Awaiting scan result</Text>
           </Box>
         ) : (
           <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$3" flex={1} minHeight={0}>
             <HStack justifyContent="space-between" alignItems="center" mb="$2">
-              <Text color={YELLOW} fontSize="$lg" fontWeight="800">
-                Decoded payload
-              </Text>
+              <Text color={YELLOW} fontSize="$lg" fontWeight="800">Decoded payload</Text>
               
               {result && (
                 <Text 
-                  color={result.isDuplicate ? ORANGE_COLOR : (result.status === 'pass' ? PASS_COLOR : FAIL_COLOR)} 
-                  fontWeight="900" 
-                  fontSize="$sm"
+                  color={result.phase === 1 ? FAIL_COLOR : (result.isDuplicate ? ORANGE_COLOR : PASS_COLOR)} 
+                  fontWeight="900" fontSize="$sm"
                 >
-                  {result.isDuplicate 
-                    ? '⚠️ DUPLICATE ENTRY' 
-                    : (result.status === 'pass' ? '✅ SAVED (PASS)' : '❌ SAVED (FAIL)')}
+                  {result.phase === 1 
+                    ? '❌ PHASE 1 FAILED' 
+                    : (result.isDuplicate ? '⚠️ DUPLICATE ENTRY' : '✅ SAVED (PASS)')}
                 </Text>
               )}
             </HStack>
@@ -540,22 +455,18 @@ export default function ScannerPage() {
         )}
       </VStack>
 
+      {/* Toast Notification */}
       {toastResult && uiMode === 'PASS_FAIL_MODE' ? (
         <Pressable style={styles.toast} onPress={() => setToastResult(null)}>
-          <Box
-            bg={PANEL}
-            borderWidth={2}
-            borderColor={getToastBorderColor(toastResult)}
-            borderRadius="$lg"
-            px="$4"
-            py="$3"
-          >
+          <Box bg={PANEL} borderWidth={2} borderColor={getToastBorderColor(toastResult)} borderRadius="$lg" px="$4" py="$3">
             <HStack justifyContent="space-between" alignItems="center" space="md">
               <Text color={getToastBorderColor(toastResult)} fontWeight="900">
-                {toastResult.isDuplicate ? 'DUPLICATE' : (toastResult.status === 'pass' ? 'PASS' : 'FAIL')}
+                {toastResult.phase === 1 ? 'FAIL' : (toastResult.isDuplicate ? 'DUPLICATE' : 'PASS')}
               </Text>
               <Text color="#f8fafc" flex={1} numberOfLines={2}>
-                {toastResult.isDuplicate ? 'Entry already exists in history.' : toastResult.reason}
+                {toastResult.phase === 1 
+                  ? toastResult.reason 
+                  : (toastResult.isDuplicate ? 'Entry already exists in history.' : toastResult.reason)}
               </Text>
               <Text color="#cbd5e1" fontSize="$lg">×</Text>
             </HStack>
@@ -563,45 +474,19 @@ export default function ScannerPage() {
         </Pressable>
       ) : null}
 
-      <Modal
-        visible={keyPickerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setKeyPickerVisible(false)}
-      >
+      {/* Key Picker Modal */}
+      <Modal visible={keyPickerVisible} transparent animationType="fade" onRequestClose={() => setKeyPickerVisible(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setKeyPickerVisible(false)}>
           <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$4">
-            <Text color={YELLOW} fontSize="$xl" fontWeight="900" mb="$3">
-              Select public key
-            </Text>
-
+            <Text color={YELLOW} fontSize="$xl" fontWeight="900" mb="$3">Select public key</Text>
             {publicKeys.length ? publicKeys.map(key => (
-              <Pressable
-                key={key.id}
-                onPress={() => {
-                  setSelectedKeyId(key.id);
-                  setResult(null);
-                  setStatusMessage('Ready for scan');
-                  setKeyPickerVisible(false);
-                }}
-              >
+              <Pressable key={key.id} onPress={() => { setSelectedKeyId(key.id); setResult(null); setStatusMessage('Ready for scan'); setKeyPickerVisible(false); }}>
                 <HStack justifyContent="space-between" alignItems="center" borderTopWidth={1} borderTopColor="#334155" py="$3">
-                  <Text color="#f8fafc" fontSize="$md" flexShrink={1}>
-                    {key.name}
-                  </Text>
-                  {key.id === selectedKeyId ? (
-                    <Text color={YELLOW} fontSize="$xs" fontWeight="900">
-                      SELECTED
-                    </Text>
-                  ) : null}
+                  <Text color="#f8fafc" fontSize="$md" flexShrink={1}>{key.name}</Text>
+                  {key.id === selectedKeyId ? <Text color={YELLOW} fontSize="$xs" fontWeight="900">SELECTED</Text> : null}
                 </HStack>
               </Pressable>
-            )) : (
-              <Text color="#cbd5e1" py="$3">
-                No public keys found. Add one in Settings.
-              </Text>
-            )}
-
+            )) : <Text color="#cbd5e1" py="$3">No public keys found.</Text>}
             <Button variant="link" mt="$2" onPress={() => setKeyPickerVisible(false)}>
               <ButtonText color={YELLOW}>Close</ButtonText>
             </Button>
@@ -609,35 +494,56 @@ export default function ScannerPage() {
         </Pressable>
       </Modal>
 
-      <Modal
-        visible={Boolean(splashResult && uiMode === 'PASS_FAIL_MODE')}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        navigationBarTranslucent
-        onRequestClose={() => undefined}
-      >
+      {/* Splash Screen (Pass/Fail Mode) */}
+      <Modal visible={Boolean(splashResult && uiMode === 'PASS_FAIL_MODE')} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={() => undefined}>
         {splashResult ? (
-          <Box
-            flex={1}
-            bg={getSplashBgColor(splashResult)}
-            alignItems="center"
-            justifyContent="center"
-            px="$6"
-          >
+          <Box flex={1} bg={getSplashBgColor(splashResult)} alignItems="center" justifyContent="center" px="$6">
             <Text color="#ffffff" fontSize="$6xl" fontWeight="900" textAlign="center">
-              {splashResult.isDuplicate ? 'DUPLICATE' : (splashResult.status === 'pass' ? 'PASS' : 'FAIL')}
+              {splashResult.phase === 1 ? 'FAIL' : (splashResult.isDuplicate ? 'DUPLICATE' : 'PASS')}
             </Text>
+            
             <Text color="#ffffff" fontSize="$xl" fontWeight="800" textAlign="center" mt="$3">
-              {splashResult.isDuplicate 
-                ? 'ENTRY ALREADY EXISTS' 
-                : (splashResult.status === 'pass' ? 'THIS VERIFICATION PASSED' : 'THIS VERIFICATION FAILED')}
+              {splashResult.phase === 1 
+                ? 'PHASE 1 FAILED' 
+                : (splashResult.isDuplicate ? 'PHASE 2: DUPLICATE' : 'PHASE 1 & 2 PASSED')}
             </Text>
-            <Text color="#ffffff" fontSize="$md" textAlign="center" mt="$4">
-              {splashResult.isDuplicate ? 'This QR code has already been scanned.' : splashResult.reason}
+            
+            <Text color="#ffffff" fontSize="$md" textAlign="center" mt="$4" fontWeight="600">
+              {splashResult.phase === 1 
+                ? `Reason: ${splashResult.reason}` 
+                : (splashResult.isDuplicate ? 'This QR code has already been scanned.' : splashResult.reason)}
             </Text>
           </Box>
         ) : null}
+      </Modal>
+
+      {/* Duplicate Data Modal (Data Mode Only) */}
+      <Modal visible={duplicateModalVisible} transparent animationType="slide" onRequestClose={() => setDuplicateModalVisible(false)}>
+        <Box flex={1} bg="rgba(2, 6, 23, 0.9)" justifyContent="center" px="$4">
+          <Box bg={PANEL} borderWidth={2} borderColor={ORANGE_COLOR} borderRadius="$xl" p="$4">
+            <HStack justifyContent="space-between" alignItems="center" mb="$3">
+              <Text color={ORANGE_COLOR} fontSize="$xl" fontWeight="900">⚠️ DUPLICATE FOUND</Text>
+              <Pressable onPress={() => setDuplicateModalVisible(false)}>
+                <Text color="#f8fafc" fontSize="$2xl" fontWeight="900">×</Text>
+              </Pressable>
+            </HStack>
+            
+            <Text color="#cbd5e1" fontSize="$sm" mb="$3">
+              This QR code was already scanned on {new Date(duplicateRecord?.scanned_at || '').toLocaleString()}.
+            </Text>
+
+            <Box bg={PANEL_ALT} p="$3" borderRadius="$lg" borderWidth={1} borderColor="#334155">
+              <Text color={YELLOW} fontSize="$xs" fontWeight="800" mb="$1">PREVIOUS DB RECORD:</Text>
+              <Text color="#e2e8f0" fontSize="$xs" lineHeight={20}>
+                {duplicateRecord?.data_json || 'No data recorded.'}
+              </Text>
+            </Box>
+
+            <Button mt="$4" bg={ORANGE_COLOR} onPress={() => setDuplicateModalVisible(false)}>
+              <ButtonText color={BLACK} fontWeight="900">Dismiss</ButtonText>
+            </Button>
+          </Box>
+        </Box>
       </Modal>
     </Box>
   );

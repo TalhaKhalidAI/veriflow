@@ -568,3 +568,36 @@ export async function checkScanExists(scannedValue: string): Promise<boolean> {
     return false; 
   }
 }
+
+// src/core/db.ts
+
+export async function getScanRecord(scannedValue: string): Promise<ScanHistoryRecord | null> {
+  const cleanValue = scannedValue.trim();
+  if (!db) {
+    return memoryStore.scanHistory.find(item => item.scanned_value.trim() === cleanValue) || null;
+  }
+  try {
+    const result = dbAny.getFirstSync(
+      'SELECT * FROM scan_history WHERE scanned_value = ? LIMIT 1',
+      [cleanValue]
+    );
+    return result || null;
+  } catch (error) {
+    console.error("❌ getScanRecord query failed:", error);
+    return null;
+  }
+}
+
+export async function updateScanHistoryStatus(id: number, status: 'pass' | 'fail', reason: string): Promise<void> {
+  if (!db) {
+    memoryStore.scanHistory = memoryStore.scanHistory.map(item =>
+      item.id === id ? { ...item, status, reason } : item
+    );
+    return Promise.resolve();
+  }
+  try {
+    db.runSync('UPDATE scan_history SET status = ?, reason = ? WHERE id = ?', [status, reason, id]);
+  } catch (error) {
+    console.error("❌ updateScanHistoryStatus query failed:", error);
+  }
+}

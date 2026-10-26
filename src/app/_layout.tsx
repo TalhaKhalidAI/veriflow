@@ -49,6 +49,7 @@ export default function RootLayout() {
         >
           <Drawer.Screen name="index" options={{ title: 'Home', drawerLabel: 'Home' }} />
           <Drawer.Screen name="scanner" options={{ title: 'Scanner', drawerLabel: 'Scanner' }} />
+          <Drawer.Screen name="history" options={{ title: 'Scan History', drawerLabel: 'History' }} />
           <Drawer.Screen name="settings" options={{ title: 'Settings', drawerLabel: 'Settings' }} />
         </Drawer>
       </GluestackUIProvider>

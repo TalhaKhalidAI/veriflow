@@ -1,584 +1,513 @@
 import {
-    Box,
-    Button,
-    ButtonText,
-    HStack,
-    Heading,
-    Pressable,
-    ScrollView,
-    Text,
-    VStack,
+  Box,
+  Button,
+  ButtonText,
+  HStack,
+  Heading,
+  Pressable,
+  ScrollView,
+  Text,
+  VStack,
 } from '@gluestack-ui/themed';
-import type { PermissionResponse } from 'expo';
-import type { BarcodeScanningResult } from 'expo-camera';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Modal, Platform, StyleSheet, useWindowDimensions } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { ShieldAlert, CheckCircle2, XCircle, SlidersHorizontal } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useAuth } from '../core/authContext';
+import {
+  addScanToQueue,
+  getInventoryItems,
+  getPublicKeys,
+  isScanAlreadyInQueue,
+} from '../core/db';
+import { RuleCheck, verifyJwtAgainstPublicKey } from '../core/jwt';
+import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '../core/types';
 
-type CameraModuleType = typeof import('expo-camera');
-let cameraModule: CameraModuleType | null = null;
-
-try {
-  cameraModule = require('expo-camera');
-} catch {
-  cameraModule = null;
-}
-
-const CameraView = cameraModule?.CameraView;
-
-let Haptics: any = null;
-try {
-  Haptics = require('expo-haptics');
-} catch {
-  Haptics = null;
-}
-
-import { addScanToQueue, getInventoryItems, getPublicKeys, initDatabase } from '@/core/db';
-import { verifyJwtAgainstPublicKey } from '@/core/jwt';
-import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '@/core/types';
-
-const PASS_COLOR = '#22c55e';
-const FAIL_COLOR = '#ef4444';
-const YELLOW = '#facc15';
 const BLACK = '#07111d';
 const PANEL = '#0f172a';
-const PANEL_ALT = '#0b1220';
-const SCAN_NOTIFICATION_CHANNEL = 'scan-results';
-
-type NotificationsModule = typeof import('expo-notifications');
-let notificationsModule: NotificationsModule | null = null;
-
-try {
-  const loadedNotifications: NotificationsModule = require('expo-notifications');
-  loadedNotifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
-  });
-  notificationsModule = loadedNotifications;
-} catch {
-  notificationsModule = null;
-}
-
-async function notifyScanResult(result: VerificationResult) {
-  if (!notificationsModule) return;
-
-  try {
-    if (Platform.OS === 'android') {
-      await notificationsModule.setNotificationChannelAsync(SCAN_NOTIFICATION_CHANNEL, {
-        name: 'Scan results',
-        importance: notificationsModule.AndroidImportance.HIGH,
-        vibrationPattern: [0, 250, 150, 250],
-        lightColor: YELLOW,
-      });
-    }
-
-    let permission = await notificationsModule.getPermissionsAsync();
-    if (!permission.granted && permission.canAskAgain) {
-      permission = await notificationsModule.requestPermissionsAsync();
-    }
-    if (!permission.granted) return;
-
-    await notificationsModule.scheduleNotificationAsync({
-      content: {
-        title: result.status === 'pass' ? 'Verification passed' : 'Verification failed',
-        body: result.reason,
-        sound: true,
-        data: { status: result.status },
-      },
-      trigger: Platform.OS === 'android' ? { channelId: SCAN_NOTIFICATION_CHANNEL } : null,
-    });
-  } catch {
-    return;
-  }
-}
-
-function extractJwt(value: string): string | null {
-  let candidate = value.trim();
-
-  try {
-    const url = new URL(candidate);
-    candidate = url.searchParams.get('jwt') ?? url.searchParams.get('token') ?? candidate;
-  } catch {
-    // Raw JWT QR codes are not URLs.
-  }
-
-  candidate = candidate.trim();
-  const segments = candidate.split('.');
-  return segments.length === 3 && segments.every(Boolean) ? candidate : null;
-}
+const PANEL_ALT = '#111c2e';
+const YELLOW = '#facc15';
+const MUTED = '#94a3b8';
+const PASS_COLOR = '#22c55e';
+const FAIL_COLOR = '#ef4444';
 
 export default function ScannerPage() {
+  const { session, hasPermission } = useAuth();
+  const [permission, requestPermission] = useCameraPermissions();
   const { height } = useWindowDimensions();
-  const cameraPreviewHeight = Math.max(112, Math.min(190, Math.round(height * 0.17)));
-  const [uiMode, setUiMode] = useState<UiMode>('PASS_FAIL_MODE');
-  const [permission, setPermission] = useState<PermissionResponse | null>(null);
+
+  // Permissions gate
+  const canScan = hasPermission('scans.create');
+
+  // State
   const [publicKeys, setPublicKeys] = useState<PublicKeyRecord[]>([]);
-  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+
+  // Inventory Rules state
+  const [inventoryRules, setInventoryRules] = useState<InventoryRecord[]>([]);
+  const [selectedRuleId, setSelectedRuleId] = useState<number | 'ALL' | null>(null);
+
+  // Camera & Scan state
+  const [hasScanned, setHasScanned] = useState<boolean>(false);
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [splashResult, setSplashResult] = useState<VerificationResult | null>(null);
-  const [toastResult, setToastResult] = useState<VerificationResult | null>(null);
-  const [statusMessage, setStatusMessage] = useState('Ready for scan');
-  const [cameraActive, setCameraActive] = useState(false);
-  const [hasScanned, setHasScanned] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
+  const [uiMode, setUiMode] = useState<UiMode>('PASS_FAIL_MODE');
+
+  // Picker Modals
   const [keyPickerVisible, setKeyPickerVisible] = useState(false);
-  const scanLocked = useRef(false);
-  const uiModeRef = useRef<UiMode>('PASS_FAIL_MODE');
+  const [rulePickerVisible, setRulePickerVisible] = useState(false);
 
-  useEffect(() => {
-    if (!cameraModule) {
-      setStatusMessage('Camera module is missing from this app build. Rebuild to enable QR scanning.');
-      return;
-    }
+  const selectedKey = publicKeys.find(k => k.id === selectedKeyId) || publicKeys[0] || null;
+  const selectedRule = typeof selectedRuleId === 'number'
+    ? inventoryRules.find(r => r.id === selectedRuleId) || null
+    : null;
 
-    cameraModule.Camera.getCameraPermissionsAsync()
-      .then(setPermission)
-      .catch(() => setStatusMessage('Could not check camera permission'));
-  }, []);
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        await initDatabase();
-        const [keys, items] = await Promise.all([getPublicKeys(), getInventoryItems()]);
-        setPublicKeys(keys);
-        setInventory(items);
-        if (keys.length > 0) setSelectedKeyId(keys[0].id);
-      } catch {
-        setStatusMessage('Could not load scanner settings');
-      }
-    };
-
-    loadData();
-  }, []);
-
-  const selectedKey = useMemo(
-    () => publicKeys.find(key => key.id === selectedKeyId) ?? null,
-    [publicKeys, selectedKeyId],
-  );
-
-  const presentOutcome = (outcome: VerificationResult) => {
-    setResult(outcome);
-    if (uiModeRef.current === 'PASS_FAIL_MODE') {
-      setStatusMessage(outcome.reason);
-      setSplashResult(outcome);
-      setToastResult(null);
-      void notifyScanResult(outcome);
-    } else {
-      setStatusMessage(outcome.payload ? 'Scan complete. Review the decoded payload.' : 'Scan complete. No payload available.');
-    }
-  };
-
-  const changeUiMode = (mode: UiMode) => {
-    uiModeRef.current = mode;
-    setUiMode(mode);
-  };
-
-  useEffect(() => {
-    if (uiMode === 'DATA_MODE') {
-      setSplashResult(null);
-      setToastResult(null);
-    }
-  }, [uiMode]);
-
-  useEffect(() => {
-    if (!splashResult) return;
-
-    const timeout = setTimeout(() => {
-      setSplashResult(null);
-      setToastResult(splashResult);
-      setStatusMessage('Ready for scan');
-    }, 5500);
-
-    return () => clearTimeout(timeout);
-  }, [splashResult]);
-
-  useEffect(() => {
-    if (!toastResult) return;
-
-    const timeout = setTimeout(() => setToastResult(null), 4000);
-    return () => clearTimeout(timeout);
-  }, [toastResult]);
-
-  const triggerHaptics = async (type: 'success' | 'error') => {
-    if (!Haptics || !Haptics.notificationAsync) {
-      return;
-    }
-
+  const loadData = async () => {
     try {
-      const feedbackType = type === 'success'
-        ? Haptics.NotificationFeedbackType.Success
-        : Haptics.NotificationFeedbackType.Error;
-      await Haptics.notificationAsync(feedbackType);
-    } catch {
-      return;
-    }
-  };
-
-  const openKeyPicker = async () => {
-    try {
-      await initDatabase();
       const keys = await getPublicKeys();
       setPublicKeys(keys);
-      if (!keys.some(key => key.id === selectedKeyId)) {
-        setSelectedKeyId(keys[0]?.id ?? null);
+      if (session?.publicKeyId && keys.some(k => k.id === session.publicKeyId)) {
+        setSelectedKeyId(session.publicKeyId);
+      } else if (keys.length > 0 && !selectedKeyId) {
+        setSelectedKeyId(keys[0].id);
       }
-      setKeyPickerVisible(true);
-    } catch {
-      setStatusMessage('Could not load public keys');
+
+      const rules = await getInventoryItems();
+      setInventoryRules(rules);
+    } catch (e) {
+      console.warn('Error loading scanner dependencies:', e);
     }
   };
 
-  const startCamera = async () => {
-    if (!cameraModule) {
-      setStatusMessage('Camera module is missing from this app build. Rebuild to enable QR scanning.');
-      return;
-    }
+  useEffect(() => {
+    void loadData();
+  }, []);
 
-    if (!permission?.granted) {
-      const response = await cameraModule.Camera.requestCameraPermissionsAsync();
-      setPermission(response);
-      if (!response.granted) {
-        setStatusMessage('Camera permission is required to scan QR codes');
-        return;
-      }
-    }
-
-    scanLocked.current = false;
-    setResult(null);
-    setHasScanned(false);
-    setCameraActive(true);
-    setStatusMessage('Point the camera at a signed QR code');
-  };
-
-  const handleBarcodeScanned = async ({ data }: BarcodeScanningResult) => {
-    if (scanLocked.current) return;
-    scanLocked.current = true;
-    setCameraActive(false);
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    if (isVerifying || hasScanned) return;
     setHasScanned(true);
-
-    const jwt = extractJwt(data)?.trim() ?? null;
-
-    if (!jwt) {
-      const failure: VerificationResult = {
-        valid: false,
-        status: 'fail',
-        reason: 'QR code does not contain valid signed data',
-      };
-      presentOutcome(failure);
-      await addScanToQueue(data, 'fail');
-      await triggerHaptics('error');
-      return;
-    }
+    setIsVerifying(true);
 
     if (!selectedKey) {
-      const failure: VerificationResult = {
+      const errRes: VerificationResult = {
         valid: false,
         status: 'fail',
-        reason: 'No public key selected',
+        reason: 'No public key selected for RS256 verification',
       };
-      presentOutcome(failure);
-      await addScanToQueue(jwt, 'fail');
-      await triggerHaptics('error');
+      setResult(errRes);
+      setSplashResult(errRes);
+      setIsVerifying(false);
       return;
     }
 
-    setIsVerifying(true);
     try {
-      const inventoryMatch = inventory[0];
-      const verification = await verifyJwtAgainstPublicKey(
-        jwt,
-        selectedKey.public_key_string,
-        inventoryMatch?.matching_claim_key,
-        inventoryMatch?.expected_value,
+      let rulesToCheck: RuleCheck[] | undefined;
+
+      if (selectedRuleId === 'ALL') {
+        rulesToCheck = inventoryRules.map(r => ({
+          ruleName: r.inventory_name,
+          matchingClaimKey: r.matching_claim_key,
+          expectedValue: r.expected_value,
+        }));
+      } else if (selectedRule) {
+        rulesToCheck = [
+          {
+            ruleName: selectedRule.inventory_name,
+            matchingClaimKey: selectedRule.matching_claim_key,
+            expectedValue: selectedRule.expected_value,
+          },
+        ];
+      }
+
+      // 1. Prevent duplicate scans for the current shift (Requirement 2)
+      const isDuplicate = await isScanAlreadyInQueue(
+        data.trim(),
+        session?.userId,
+        session?.shiftId,
       );
 
-      presentOutcome(verification);
-      await addScanToQueue(jwt, verification.status);
-      await triggerHaptics(verification.status === 'pass' ? 'success' : 'error');
-    } catch {
-      const failure: VerificationResult = {
+      if (isDuplicate) {
+        const dupRes: VerificationResult = {
+          valid: false,
+          status: 'fail',
+          reason: 'Duplicate Item: Already scanned in this shift. Skipped to prevent redundancy.',
+        };
+        setResult(dupRes);
+        setSplashResult(dupRes);
+        setIsVerifying(false);
+        return;
+      }
+
+      const verifyRes = await verifyJwtAgainstPublicKey(
+        data.trim(),
+        selectedKey.public_key_string,
+        rulesToCheck,
+      );
+
+      setResult(verifyRes);
+      setSplashResult(verifyRes);
+
+      // Save to SQLite queue
+      const reasonNote = rulesToCheck && rulesToCheck.length > 0
+        ? `Checked ${rulesToCheck.length} rule(s): ${verifyRes.reason}`
+        : verifyRes.reason;
+      await addScanToQueue(
+        data.trim(),
+        verifyRes.status,
+        reasonNote,
+        session?.userId,
+        session?.shiftId,
+      );
+    } catch (err: any) {
+      const failRes: VerificationResult = {
         valid: false,
         status: 'fail',
-        reason: 'Could not verify or save this scan',
+        reason: err.message || 'Verification exception',
       };
-      presentOutcome(failure);
-      await triggerHaptics('error');
+      setResult(failRes);
+      setSplashResult(failRes);
     } finally {
       setIsVerifying(false);
     }
   };
 
+  const resetScanner = () => {
+    setHasScanned(false);
+    setResult(null);
+    setSplashResult(null);
+  };
+
+  if (!canScan) {
+    return (
+      <Box flex={1} bg={BLACK} p="$6" alignItems="center" justifyContent="center">
+        <ShieldAlert size={64} color="#f87171" />
+        <Heading color="#f87171" size="xl" mt="$4" textAlign="center">
+          Scanner Access Restricted
+        </Heading>
+        <Text color={MUTED} textAlign="center" mt="$2" maxWidth={360}>
+          Your shift token does not have the required <Text color={YELLOW} fontWeight="700">scans.create</Text> permission to operate the barcode scanner.
+        </Text>
+      </Box>
+    );
+  }
+
+  const cameraPreviewHeight = Math.min(Math.max(height * 0.32, 220), 320);
+
   return (
-    <Box flex={1} bg={BLACK} px="$4" pt="$2" pb="$2">
-      <VStack space="sm" flex={1}>
-        <HStack alignItems="center" space="sm">
-          <Image
-            source={require('../assets/msi_white.png')}
-            style={{ width: 48, height: 42 }}
-            resizeMode="contain"
-            accessibilityLabel="VeriFlow logo"
-          />
-          <VStack space="xs" flex={1}>
-            <Heading size="lg" color={YELLOW} fontWeight="900">
-              VeriFlow
-            </Heading>
-            <Text color="#e2e8f0" fontSize="$xs">
-              Industrial Offline Scanner
-            </Text>
-          </VStack>
-        </HStack>
+    <Box flex={1} bg={BLACK} px="$3" py="$4">
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+        <VStack space="md" width="100%" maxWidth={540} alignSelf="center">
+          {/* Public Key & Mode Selector */}
+          <HStack justifyContent="space-between" alignItems="center">
+            <Pressable onPress={() => setKeyPickerVisible(true)} flex={1} mr="$2">
+              <Box bg={PANEL} p="$2" borderRadius="$lg" borderWidth={1} borderColor="#334155">
+                <Text color={MUTED} fontSize="$xs" fontWeight="700">VERIFICATION KEY:</Text>
+                <Text color={YELLOW} fontWeight="800" fontSize="$xs" numberOfLines={1}>
+                  {selectedKey ? selectedKey.name : 'Select Key ⌄'}
+                </Text>
+              </Box>
+            </Pressable>
 
-        <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$2">
-          <HStack bg={PANEL_ALT} borderRadius="$lg" overflow="hidden" borderWidth={1} borderColor={YELLOW}>
-            <Pressable
-              flex={1}
-              py="$2"
-              alignItems="center"
-              bg={uiMode === 'PASS_FAIL_MODE' ? YELLOW : PANEL_ALT}
-              onPress={() => changeUiMode('PASS_FAIL_MODE')}
+            <Button
+              size="xs"
+              variant="outline"
+              borderColor={YELLOW}
+              onPress={() => setUiMode(m => m === 'PASS_FAIL_MODE' ? 'DATA_MODE' : 'PASS_FAIL_MODE')}
             >
-              <Text color={uiMode === 'PASS_FAIL_MODE' ? BLACK : '#f8fafc'} fontWeight="800">
-                Pass / Fail
-              </Text>
-            </Pressable>
-            <Pressable
-              flex={1}
-              py="$2"
-              alignItems="center"
-              bg={uiMode === 'DATA_MODE' ? YELLOW : PANEL_ALT}
-              onPress={() => changeUiMode('DATA_MODE')}
-            >
-              <Text color={uiMode === 'DATA_MODE' ? BLACK : '#f8fafc'} fontWeight="800">
-                Data
-              </Text>
-            </Pressable>
+              <ButtonText color={YELLOW} fontSize="$xs">
+                {uiMode === 'PASS_FAIL_MODE' ? 'MODE: PASS/FAIL' : 'MODE: DATA'}
+              </ButtonText>
+            </Button>
           </HStack>
-        </Box>
 
-        <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$3">
-          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mb="$1">
-            Verification key
-          </Text>
+          {/* Optional Inventory Rule Selector (Requirement 3) */}
+          <Box bg={PANEL} p="$3" borderRadius="$xl" borderWidth={2} borderColor={selectedRuleId ? YELLOW : '#334155'}>
+            <HStack justifyContent="space-between" alignItems="center" mb="$1">
+              <HStack space="xs" alignItems="center">
+                <SlidersHorizontal size={16} color={YELLOW} />
+                <Text color="#f8fafc" fontSize="$xs" fontWeight="800">
+                  COMPARE WITH RULE (OPTIONAL)
+                </Text>
+              </HStack>
+              {selectedRuleId ? (
+                <Pressable onPress={() => setSelectedRuleId(null)}>
+                  <Text color="#f87171" fontSize="$xs" fontWeight="700">Clear</Text>
+                </Pressable>
+              ) : null}
+            </HStack>
 
-          <Pressable onPress={openKeyPicker}>
-            <Box
-              bg={PANEL_ALT}
-              borderWidth={1}
-              borderColor="#334155"
-              borderRadius="$lg"
-              px="$3"
-              py="$2"
-              flexDirection="row"
-              justifyContent="space-between"
-              alignItems="center"
-            >
-              <Text color="#f8fafc" fontSize="$md" fontWeight="700" numberOfLines={1} flex={1}>
-                {selectedKey ? selectedKey.name : 'Choose a public key'}
-              </Text>
-              <Text color={YELLOW} fontSize="$2xl" fontWeight="900">
-                ⌄
-              </Text>
-            </Box>
-          </Pressable>
+            <Pressable onPress={() => setRulePickerVisible(true)}>
+              <Box
+                bg={PANEL_ALT}
+                borderWidth={1}
+                borderColor="#334155"
+                borderRadius="$md"
+                p="$2"
+                flexDirection="row"
+                justifyContent="space-between"
+                alignItems="center"
+              >
+                <VStack flex={1} mr="$2">
+                  <Text color={selectedRuleId ? YELLOW : MUTED} fontSize="$xs" fontWeight="700" numberOfLines={1}>
+                    {selectedRuleId === 'ALL'
+                      ? `[ALL RULES] Match all ${inventoryRules.length} rules`
+                      : selectedRule
+                        ? `[RULE] ${selectedRule.inventory_name} (${selectedRule.matching_claim_key} == ${selectedRule.expected_value})`
+                        : 'None (Verify RS256 signature only)'}
+                  </Text>
+                </VStack>
+                <Text color={YELLOW} fontSize="$sm">⌄</Text>
+              </Box>
+            </Pressable>
+          </Box>
 
-          <Text color="#f8fafc" fontSize="$xs" fontWeight="800" letterSpacing={1} mt="$2" mb="$1">
-            QR scanner
-          </Text>
-
-          <Box h={cameraPreviewHeight} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" overflow="hidden" bg="#050914">
-            {cameraActive && permission?.granted && !hasScanned && CameraView ? (
+          {/* Camera Scanner View */}
+          <Box
+            h={cameraPreviewHeight}
+            borderWidth={2}
+            borderColor={result ? (result.status === 'pass' ? PASS_COLOR : FAIL_COLOR) : YELLOW}
+            borderRadius="$xl"
+            overflow="hidden"
+            bg="#050914"
+            position="relative"
+          >
+            {permission?.granted ? (
               <CameraView
                 style={StyleSheet.absoluteFill}
                 facing="back"
                 barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                onBarcodeScanned={handleBarcodeScanned}
-                onMountError={() => setStatusMessage('Could not start the camera')}
+                onBarcodeScanned={isVerifying || hasScanned ? undefined : handleBarcodeScanned}
               />
             ) : (
               <VStack flex={1} alignItems="center" justifyContent="center" px="$4">
-                <Text color="#f8fafc" fontSize="$xl" fontWeight="900" textAlign="center">
-                  {hasScanned ? 'QR code captured' : CameraView ? 'Camera ready' : 'Camera unavailable'}
-                </Text>
-                <Text color="#cbd5e1" fontSize="$sm" textAlign="center" mt="$2">
-                  {hasScanned
-                    ? 'Review the verification result below.'
-                    : CameraView
-                      ? 'Scan a signed QR code.'
-                      : 'Rebuild the Android app to enable QR scanning.'}
-                </Text>
+                <Text color="#f8fafc" textAlign="center" mb="$2">Camera permission required</Text>
+                <Button size="xs" bg={YELLOW} onPress={() => requestPermission()}>
+                  <ButtonText color={BLACK} fontWeight="800">Enable Camera</ButtonText>
+                </Button>
               </VStack>
             )}
+
+            {/* Reticle */}
+            <View style={styles.reticleOverlay} pointerEvents="none">
+              <View style={[styles.reticleBox, result ? { borderColor: result.status === 'pass' ? PASS_COLOR : FAIL_COLOR } : null]} />
+            </View>
+
+            {isVerifying ? (
+              <Box position="absolute" top={0} left={0} right={0} bottom={0} bg="rgba(0,0,0,0.7)" alignItems="center" justifyContent="center">
+                <ActivityIndicator size="large" color={YELLOW} />
+                <Text color={YELLOW} fontWeight="800" mt="$2">Verifying...</Text>
+              </Box>
+            ) : null}
           </Box>
 
-          <Button
-            mt="$2"
-            bg={YELLOW}
-            borderRadius="$lg"
-            onPress={startCamera}
-            isDisabled={isVerifying || !CameraView}
-          >
-            <ButtonText color={BLACK} fontWeight="900">
-              {isVerifying ? 'Verifying...' : hasScanned ? 'Scan another QR' : 'Start QR scanner'}
-            </ButtonText>
-          </Button>
+          {/* Scan Action / Reset Button */}
+          {hasScanned ? (
+            <Button bg={YELLOW} borderRadius="$lg" onPress={resetScanner}>
+              <ButtonText color={BLACK} fontWeight="900">
+                Scan Another QR
+              </ButtonText>
+            </Button>
+          ) : null}
 
-          <Text color="#dbeafe" fontSize="$xs" mt="$2" numberOfLines={2}>
-            {statusMessage}
-          </Text>
-        </Box>
+          {/* Result Card */}
+          {result ? (
+            <Box
+              bg={PANEL}
+              borderWidth={2}
+              borderColor={result.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
+              borderRadius="$xl"
+              p="$4"
+            >
+              <HStack space="sm" alignItems="center" mb="$2">
+                {result.status === 'pass' ? (
+                  <CheckCircle2 size={24} color={PASS_COLOR} />
+                ) : (
+                  <XCircle size={24} color={FAIL_COLOR} />
+                )}
+                <Text color={result.status === 'pass' ? PASS_COLOR : FAIL_COLOR} fontSize="$xl" fontWeight="900">
+                  {result.status.toUpperCase()}
+                </Text>
+              </HStack>
 
-        {uiMode === 'PASS_FAIL_MODE' ? (
-          <Box
-            bg={PANEL}
-            borderWidth={3}
-            borderColor={YELLOW}
-            borderRadius="$2xl"
-            minHeight={96}
-            maxHeight={136}
-            p="$3"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text color={YELLOW} fontSize="$3xl" fontWeight="900" letterSpacing={2}>
-              READY
-            </Text>
-            <Text color="#cbd5e1" fontSize="$md" textAlign="center" mt="$2">
-              Awaiting scan result
-            </Text>
-          </Box>
-        ) : (
-          <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$3" flex={1} minHeight={0}>
-            <Text color={YELLOW} fontSize="$lg" fontWeight="800" mb="$2">
-              Decoded payload
-            </Text>
-            <ScrollView flex={1}>
-              <Text color="#e2e8f0" fontSize="$xs" lineHeight={20}>
-                {result?.payload ? JSON.stringify(result.payload, null, 2) : '{\n  "status": "waiting for scan"\n}'}
+              <Text color="#f8fafc" fontSize="$sm" mb="$2">
+                {result.reason}
               </Text>
-            </ScrollView>
-          </Box>
-        )}
-      </VStack>
 
-      {toastResult && uiMode === 'PASS_FAIL_MODE' ? (
-        <Pressable style={styles.toast} onPress={() => setToastResult(null)}>
-          <Box
-            bg={PANEL}
-            borderWidth={2}
-            borderColor={toastResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
-            borderRadius="$lg"
-            px="$4"
-            py="$3"
-          >
-            <HStack justifyContent="space-between" alignItems="center" space="md">
-              <Text color={toastResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR} fontWeight="900">
-                {toastResult.status === 'pass' ? 'PASS' : 'FAIL'}
-              </Text>
-              <Text color="#f8fafc" flex={1} numberOfLines={2}>
-                {toastResult.reason}
-              </Text>
-              <Text color="#cbd5e1" fontSize="$lg">×</Text>
-            </HStack>
-          </Box>
-        </Pressable>
-      ) : null}
-
-      <Modal
-        visible={keyPickerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setKeyPickerVisible(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setKeyPickerVisible(false)}>
-          <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$4">
-            <Text color={YELLOW} fontSize="$xl" fontWeight="900" mb="$3">
-              Select public key
-            </Text>
-
-            {publicKeys.length ? publicKeys.map(key => (
-              <Pressable
-                key={key.id}
-                onPress={() => {
-                  setSelectedKeyId(key.id);
-                  setResult(null);
-                  setStatusMessage('Ready for scan');
-                  setKeyPickerVisible(false);
-                }}
-              >
-                <HStack justifyContent="space-between" alignItems="center" borderTopWidth={1} borderTopColor="#334155" py="$3">
-                  <Text color="#f8fafc" fontSize="$md" flexShrink={1}>
-                    {key.name}
-                  </Text>
-                  {key.id === selectedKeyId ? (
-                    <Text color={YELLOW} fontSize="$xs" fontWeight="900">
-                      SELECTED
+              {uiMode === 'DATA_MODE' && result.payload ? (
+                <Box bg={PANEL_ALT} p="$3" borderRadius="$md" mt="$2">
+                  <Text color={YELLOW} fontSize="$xs" fontWeight="800" mb="$1">DECODED CLAIMS:</Text>
+                  <ScrollView style={{ maxHeight: 180 }}>
+                    <Text color="#cbd5e1" fontSize="$xs">
+                      {JSON.stringify(result.payload, null, 2)}
                     </Text>
-                  ) : null}
-                </HStack>
-              </Pressable>
-            )) : (
-              <Text color="#cbd5e1" py="$3">
-                No public keys found. Add one in Settings.
-              </Text>
-            )}
+                  </ScrollView>
+                </Box>
+              ) : null}
+            </Box>
+          ) : null}
+        </VStack>
+      </ScrollView>
 
-            <Button variant="link" mt="$2" onPress={() => setKeyPickerVisible(false)}>
-              <ButtonText color={YELLOW}>Close</ButtonText>
+      {/* Select Key Modal */}
+      <Modal visible={keyPickerVisible} transparent animationType="fade" onRequestClose={() => setKeyPickerVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setKeyPickerVisible(false)}>
+          <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$4" width="100%" maxWidth={460}>
+            <Text color={YELLOW} fontSize="$lg" fontWeight="900" mb="$3">
+              Select Public Key
+            </Text>
+            <ScrollView style={{ maxHeight: 260 }}>
+              {publicKeys.map(k => (
+                <Pressable
+                  key={k.id}
+                  onPress={() => {
+                    setSelectedKeyId(k.id);
+                    setKeyPickerVisible(false);
+                  }}
+                >
+                  <HStack justifyContent="space-between" alignItems="center" py="$3" borderTopWidth={1} borderTopColor="#334155">
+                    <Text color="#f8fafc" fontWeight="700">{k.name}</Text>
+                    {k.id === selectedKey?.id ? <Text color={YELLOW} fontWeight="900" fontSize="$xs">ACTIVE</Text> : null}
+                  </HStack>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Button mt="$3" variant="outline" borderColor="#64748b" onPress={() => setKeyPickerVisible(false)}>
+              <ButtonText color="#cbd5e1">Close</ButtonText>
             </Button>
           </Box>
         </Pressable>
       </Modal>
 
+      {/* Select Inventory Rule Modal */}
+      <Modal visible={rulePickerVisible} transparent animationType="fade" onRequestClose={() => setRulePickerVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setRulePickerVisible(false)}>
+          <Box bg={PANEL} borderWidth={2} borderColor={YELLOW} borderRadius="$xl" p="$4" width="100%" maxWidth={480}>
+            <Text color={YELLOW} fontSize="$lg" fontWeight="900" mb="$2">
+              Select Rule to Compare With QR
+            </Text>
+            <Text color={MUTED} fontSize="$xs" mb="$3">
+              Optionally require the scanned QR claims to match a rule stored in the local SQLite DB.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 280 }}>
+              {/* Option 1: None */}
+              <Pressable
+                onPress={() => {
+                  setSelectedRuleId(null);
+                  setRulePickerVisible(false);
+                }}
+              >
+                <HStack justifyContent="space-between" alignItems="center" py="$3" borderTopWidth={1} borderTopColor="#334155">
+                  <VStack>
+                    <Text color="#f8fafc" fontWeight="700">None (Signature Only)</Text>
+                    <Text color={MUTED} fontSize="$xs">Validate RS256 signature and expiration only</Text>
+                  </VStack>
+                  {selectedRuleId === null ? <Text color={YELLOW} fontWeight="900" fontSize="$xs">SELECTED</Text> : null}
+                </HStack>
+              </Pressable>
+
+              {/* Option 2: All Rules */}
+              {inventoryRules.length > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    setSelectedRuleId('ALL');
+                    setRulePickerVisible(false);
+                  }}
+                >
+                  <HStack justifyContent="space-between" alignItems="center" py="$3" borderTopWidth={1} borderTopColor="#334155">
+                    <VStack>
+                      <Text color={YELLOW} fontWeight="800">[ALL RULES] Verify All {inventoryRules.length} Rules</Text>
+                      <Text color={MUTED} fontSize="$xs">Must satisfy every active inventory rule in DB</Text>
+                    </VStack>
+                    {selectedRuleId === 'ALL' ? <Text color={YELLOW} fontWeight="900" fontSize="$xs">SELECTED</Text> : null}
+                  </HStack>
+                </Pressable>
+              ) : null}
+
+              {/* Specific Rules */}
+              {inventoryRules.map(r => (
+                <Pressable
+                  key={r.id}
+                  onPress={() => {
+                    setSelectedRuleId(r.id);
+                    setRulePickerVisible(false);
+                  }}
+                >
+                  <HStack justifyContent="space-between" alignItems="center" py="$3" borderTopWidth={1} borderTopColor="#334155">
+                    <VStack flex={1} mr="$2">
+                      <Text color="#f8fafc" fontWeight="700">{r.inventory_name}</Text>
+                      <Text color={MUTED} fontSize="$xs">
+                        claim: <Text color={YELLOW}>{r.matching_claim_key}</Text> == &quot;{r.expected_value}&quot;
+                      </Text>
+                    </VStack>
+                    {selectedRuleId === r.id ? <Text color={YELLOW} fontWeight="900" fontSize="$xs">SELECTED</Text> : null}
+                  </HStack>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <Button mt="$3" variant="outline" borderColor="#64748b" onPress={() => setRulePickerVisible(false)}>
+              <ButtonText color="#cbd5e1">Close</ButtonText>
+            </Button>
+          </Box>
+        </Pressable>
+      </Modal>
+
+      {/* Splash Result Fullscreen Modal (Pass/Fail Mode) */}
       <Modal
         visible={Boolean(splashResult && uiMode === 'PASS_FAIL_MODE')}
         transparent
         animationType="fade"
-        statusBarTranslucent
-        navigationBarTranslucent
-        onRequestClose={() => undefined}
+        onRequestClose={resetScanner}
       >
-        {splashResult ? (
-          <Box
-            flex={1}
-            bg={splashResult.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
-            alignItems="center"
-            justifyContent="center"
-            px="$6"
-          >
-            <Text color="#ffffff" fontSize="$6xl" fontWeight="900" textAlign="center">
-              {splashResult.status === 'pass' ? 'PASS' : 'FAIL'}
-            </Text>
-            <Text color="#ffffff" fontSize="$xl" fontWeight="800" textAlign="center" mt="$3">
-              {splashResult.status === 'pass' ? 'THIS VERIFICATION PASSED' : 'THIS VERIFICATION FAILED'}
-            </Text>
-            <Text color="#ffffff" fontSize="$md" textAlign="center" mt="$4">
-              {splashResult.reason}
-            </Text>
-          </Box>
-        ) : null}
+        <Pressable
+          style={[
+            styles.splashContainer,
+            { backgroundColor: splashResult?.status === 'pass' ? PASS_COLOR : FAIL_COLOR },
+          ]}
+          onPress={() => setSplashResult(null)}
+        >
+          <Text color="#ffffff" fontSize="$6xl" fontWeight="900" textAlign="center">
+            {splashResult?.status === 'pass' ? 'PASS' : 'FAIL'}
+          </Text>
+          <Text color="#ffffff" fontSize="$lg" fontWeight="800" textAlign="center" mt="$3" px="$4">
+            {splashResult?.reason}
+          </Text>
+          <Text color="#ffffff" fontSize="$xs" textAlign="center" mt="$6" opacity={0.8}>
+            Tap anywhere to dismiss
+          </Text>
+        </Pressable>
       </Modal>
     </Box>
   );
 }
 
 const styles = StyleSheet.create({
+  reticleOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reticleBox: {
+    width: 170,
+    height: 170,
+    borderWidth: 2,
+    borderColor: YELLOW,
+    borderRadius: 16,
+    borderStyle: 'dashed',
+  },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(2, 6, 23, 0.72)',
+    backgroundColor: 'rgba(2, 6, 23, 0.82)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  splashContainer: {
+    flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
-  },
-  toast: {
-    position: 'absolute',
-    top: 12,
-    left: 16,
-    right: 16,
-    zIndex: 100,
-    elevation: 12,
   },
 });

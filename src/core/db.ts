@@ -12,6 +12,7 @@ const memoryStore = {
   publicKeys: [] as PublicKeyRecord[],
   inventory: [] as InventoryRecord[],
   scans: [] as ScanRecord[],
+  settings: {} as Record<string, string>,
 };
 
 const db = SQLite ? SQLite.openDatabaseSync?.('veriflow.db') ?? null : null;
@@ -46,11 +47,28 @@ export function initDatabase(): Promise<void> {
         db.execSync(`
           CREATE TABLE IF NOT EXISTS scans_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            shift_id TEXT,
             scanned_jwt TEXT NOT NULL,
             status TEXT NOT NULL,
-            sync_status TEXT NOT NULL DEFAULT 'pending'
+            sync_status TEXT NOT NULL DEFAULT 'pending',
+            scanned_at TEXT,
+            notes TEXT
           );
         `);
+
+        db.execSync(`
+          CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          );
+        `);
+
+        // Automatic migration for existing databases: ensure newly added columns exist
+        try { db.execSync('ALTER TABLE scans_queue ADD COLUMN user_id INTEGER;'); } catch {}
+        try { db.execSync('ALTER TABLE scans_queue ADD COLUMN shift_id TEXT;'); } catch {}
+        try { db.execSync('ALTER TABLE scans_queue ADD COLUMN scanned_at TEXT;'); } catch {}
+        try { db.execSync('ALTER TABLE scans_queue ADD COLUMN notes TEXT;'); } catch {}
       });
       resolve();
     } catch (error) {
@@ -59,30 +77,61 @@ export function initDatabase(): Promise<void> {
   });
 }
 
+// ---------------- PUBLIC KEYS ----------------
 export function getPublicKeys(): Promise<PublicKeyRecord[]> {
   if (!db) {
     return Promise.resolve(memoryStore.publicKeys);
   }
-  return Promise.resolve(dbAny.getAllSync('SELECT * FROM public_keys ORDER BY created_at DESC'));
+  try {
+    return Promise.resolve(dbAny.getAllSync('SELECT * FROM public_keys ORDER BY created_at DESC'));
+  } catch {
+    return Promise.resolve([]);
+  }
 }
 
-export function addPublicKey(name: string, publicKeyString: string): Promise<number> {
+export function upsertPublicKey(name: string, publicKeyString: string): Promise<number> {
+  const trimmedPem = publicKeyString.trim();
   if (!db) {
+    const existing = memoryStore.publicKeys.find(
+      k => k.public_key_string.trim() === trimmedPem || k.name === name
+    );
+    if (existing) {
+      existing.public_key_string = trimmedPem;
+      existing.name = name;
+      return Promise.resolve(existing.id);
+    }
     const item: PublicKeyRecord = {
       id: memoryStore.publicKeys.length + 1,
       name,
-      public_key_string: publicKeyString,
+      public_key_string: trimmedPem,
       created_at: new Date().toISOString(),
     };
     memoryStore.publicKeys.unshift(item);
     return Promise.resolve(item.id);
   }
 
+  const existing = dbAny.getFirstSync(
+    'SELECT id FROM public_keys WHERE public_key_string = ? OR name = ?',
+    [trimmedPem, name],
+  );
+
+  if (existing?.id) {
+    db.runSync(
+      'UPDATE public_keys SET public_key_string = ?, name = ? WHERE id = ?',
+      [trimmedPem, name, existing.id],
+    );
+    return Promise.resolve(Number(existing.id));
+  }
+
   const result = db.runSync(
     'INSERT INTO public_keys (name, public_key_string, created_at) VALUES (?, ?, ?)',
-    [name, publicKeyString, new Date().toISOString()],
+    [name, trimmedPem, new Date().toISOString()],
   );
   return Promise.resolve(Number(result.lastInsertRowId));
+}
+
+export function addPublicKey(name: string, publicKeyString: string): Promise<number> {
+  return upsertPublicKey(name, publicKeyString);
 }
 
 export function updatePublicKey(id: number, name: string, publicKeyString: string): Promise<void> {
@@ -103,11 +152,16 @@ export function deletePublicKey(id: number): Promise<void> {
   return Promise.resolve();
 }
 
+// ---------------- INVENTORY RULES ----------------
 export function getInventoryItems(): Promise<InventoryRecord[]> {
   if (!db) {
     return Promise.resolve(memoryStore.inventory);
   }
-  return Promise.resolve(dbAny.getAllSync('SELECT * FROM inventory_ids ORDER BY id DESC'));
+  try {
+    return Promise.resolve(dbAny.getAllSync('SELECT * FROM inventory_ids ORDER BY id DESC'));
+  } catch {
+    return Promise.resolve([]);
+  }
 }
 
 export function addInventoryItem(
@@ -159,28 +213,258 @@ export function deleteInventoryItem(id: number): Promise<void> {
   return Promise.resolve();
 }
 
-export function addScanToQueue(scannedJwt: string, status: 'pass' | 'fail'): Promise<number> {
+export async function syncRulesFromPayload(
+  rules?: Array<{ rule_name?: string; matching_claim_key: string; expected_value: string }>,
+): Promise<number> {
+  if (!rules || !Array.isArray(rules) || rules.length === 0) {
+    return 0;
+  }
+
+  const existing = await getInventoryItems();
+  let addedCount = 0;
+
+  for (const r of rules) {
+    const ruleName = r.rule_name || `Rule_${r.matching_claim_key}`;
+    const claimKey = r.matching_claim_key;
+    const expVal = String(r.expected_value);
+
+    const match = existing.find(
+      e => e.matching_claim_key === claimKey && String(e.expected_value) === expVal,
+    );
+
+    if (!match) {
+      await addInventoryItem(ruleName, claimKey, expVal);
+      addedCount++;
+    }
+  }
+
+  return addedCount;
+}
+
+// ---------------- SCANS QUEUE ----------------
+export function addScanToQueue(
+  scannedJwt: string,
+  status: 'pass' | 'fail',
+  notes?: string,
+  userId?: number,
+  shiftId?: string,
+): Promise<number> {
+  const timestamp = new Date().toISOString();
   if (!db) {
     const item: ScanRecord = {
       id: memoryStore.scans.length + 1,
+      user_id: userId,
+      shift_id: shiftId,
       scanned_jwt: scannedJwt,
       status,
       sync_status: 'pending',
+      scanned_at: timestamp,
+      notes,
     };
     memoryStore.scans.unshift(item);
     return Promise.resolve(item.id);
   }
 
-  const result = db.runSync(
-    'INSERT INTO scans_queue (scanned_jwt, status, sync_status) VALUES (?, ?, ?)',
-    [scannedJwt, status, 'pending'],
-  );
-  return Promise.resolve(Number(result.lastInsertRowId));
+  try {
+    const result = db.runSync(
+      'INSERT INTO scans_queue (scanned_jwt, status, sync_status, scanned_at, notes, user_id, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [scannedJwt, status, 'pending', timestamp, notes ?? null, userId ?? null, shiftId ?? null],
+    );
+    return Promise.resolve(Number(result.lastInsertRowId));
+  } catch (err: any) {
+    if (String(err?.message || err).includes('no column named')) {
+      try { db.execSync('ALTER TABLE scans_queue ADD COLUMN user_id INTEGER;'); } catch {}
+      try { db.execSync('ALTER TABLE scans_queue ADD COLUMN shift_id TEXT;'); } catch {}
+      try { db.execSync('ALTER TABLE scans_queue ADD COLUMN scanned_at TEXT;'); } catch {}
+      try { db.execSync('ALTER TABLE scans_queue ADD COLUMN notes TEXT;'); } catch {}
+      const retryResult = db.runSync(
+        'INSERT INTO scans_queue (scanned_jwt, status, sync_status, scanned_at, notes, user_id, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [scannedJwt, status, 'pending', timestamp, notes ?? null, userId ?? null, shiftId ?? null],
+      );
+      return Promise.resolve(Number(retryResult.lastInsertRowId));
+    }
+    throw err;
+  }
 }
 
-export function getPendingScans(): Promise<ScanRecord[]> {
+export function isScanAlreadyInQueue(
+  scannedJwt: string,
+  userId?: number,
+  shiftId?: string,
+): Promise<boolean> {
+  const trimmed = scannedJwt.trim();
   if (!db) {
-    return Promise.resolve(memoryStore.scans.filter(item => item.sync_status === 'pending'));
+    return Promise.resolve(
+      memoryStore.scans.some(
+        s =>
+          s.scanned_jwt.trim() === trimmed &&
+          (shiftId ? s.shift_id === shiftId : true) &&
+          (userId !== undefined ? s.user_id === userId : true),
+      ),
+    );
   }
-  return Promise.resolve(dbAny.getAllSync('SELECT * FROM scans_queue WHERE sync_status = ? ORDER BY id DESC', ['pending']));
+  try {
+    let query = 'SELECT id FROM scans_queue WHERE scanned_jwt = ?';
+    const params: any[] = [trimmed];
+
+    if (shiftId) {
+      query += ' AND shift_id = ?';
+      params.push(shiftId);
+    }
+    if (userId !== undefined) {
+      query += ' AND user_id = ?';
+      params.push(userId);
+    }
+
+    const row = dbAny.getFirstSync(query, params);
+    return Promise.resolve(Boolean(row?.id));
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+export function getPendingScans(userId?: number): Promise<ScanRecord[]> {
+  if (!db) {
+    return Promise.resolve(
+      memoryStore.scans.filter(
+        item => item.sync_status !== 'synced' && (userId === undefined || item.user_id === userId)
+      )
+    );
+  }
+  try {
+    if (userId !== undefined) {
+      return Promise.resolve(
+        dbAny.getAllSync(
+          'SELECT * FROM scans_queue WHERE sync_status != ? AND user_id = ? ORDER BY id DESC',
+          ['synced', userId],
+        ),
+      );
+    }
+    return Promise.resolve(
+      dbAny.getAllSync('SELECT * FROM scans_queue WHERE sync_status != ? ORDER BY id DESC', ['synced']),
+    );
+  } catch {
+    return Promise.resolve([]);
+  }
+}
+
+export function getFailedScans(userId?: number): Promise<ScanRecord[]> {
+  if (!db) {
+    return Promise.resolve(
+      memoryStore.scans.filter(
+        item => item.sync_status === 'failed' && (userId === undefined || item.user_id === userId)
+      )
+    );
+  }
+  try {
+    if (userId !== undefined) {
+      return Promise.resolve(
+        dbAny.getAllSync(
+          'SELECT * FROM scans_queue WHERE sync_status = ? AND user_id = ? ORDER BY id DESC',
+          ['failed', userId],
+        ),
+      );
+    }
+    return Promise.resolve(
+      dbAny.getAllSync('SELECT * FROM scans_queue WHERE sync_status = ? ORDER BY id DESC', ['failed']),
+    );
+  } catch {
+    return Promise.resolve([]);
+  }
+}
+
+export function markScansAsFailed(ids: number[], errorMsg?: string): Promise<void> {
+  if (!ids.length) return Promise.resolve();
+  if (!db) {
+    memoryStore.scans = memoryStore.scans.map(s =>
+      ids.includes(s.id)
+        ? { ...s, sync_status: 'failed', notes: errorMsg ? `${s.notes || ''} [Sync Error: ${errorMsg}]` : s.notes }
+        : s,
+    );
+    return Promise.resolve();
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(`UPDATE scans_queue SET sync_status = 'failed' WHERE id IN (${placeholders})`, ids);
+  return Promise.resolve();
+}
+
+export function getAllScans(userId?: number): Promise<ScanRecord[]> {
+  if (!db) {
+    return Promise.resolve(
+      memoryStore.scans.filter(
+        item => userId === undefined || item.user_id === userId
+      )
+    );
+  }
+  try {
+    if (userId !== undefined) {
+      return Promise.resolve(
+        dbAny.getAllSync(
+          'SELECT * FROM scans_queue WHERE user_id = ? ORDER BY id DESC',
+          [userId],
+        ),
+      );
+    }
+    return Promise.resolve(dbAny.getAllSync('SELECT * FROM scans_queue ORDER BY id DESC'));
+  } catch {
+    return Promise.resolve([]);
+  }
+}
+
+export function markScansAsSynced(ids: number[]): Promise<void> {
+  if (!ids.length) return Promise.resolve();
+  if (!db) {
+    memoryStore.scans = memoryStore.scans.map(s => ids.includes(s.id) ? { ...s, sync_status: 'synced' } : s);
+    return Promise.resolve();
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(`UPDATE scans_queue SET sync_status = 'synced' WHERE id IN (${placeholders})`, ids);
+  return Promise.resolve();
+}
+
+export function deleteScan(id: number): Promise<void> {
+  if (!db) {
+    memoryStore.scans = memoryStore.scans.filter(s => s.id !== id);
+    return Promise.resolve();
+  }
+  db.runSync('DELETE FROM scans_queue WHERE id = ?', [id]);
+  return Promise.resolve();
+}
+
+export function updateScanStatus(id: number, status: 'pass' | 'fail'): Promise<void> {
+  if (!db) {
+    memoryStore.scans = memoryStore.scans.map(s => s.id === id ? { ...s, status } : s);
+    return Promise.resolve();
+  }
+  db.runSync('UPDATE scans_queue SET status = ? WHERE id = ?', [status, id]);
+  return Promise.resolve();
+}
+
+// ---------------- APP SETTINGS ----------------
+export function getAppSetting(key: string, defaultValue: string = ''): Promise<string> {
+  if (!db) {
+    return Promise.resolve(memoryStore.settings[key] ?? defaultValue);
+  }
+  try {
+    const row = dbAny.getFirstSync('SELECT value FROM app_settings WHERE key = ?', [key]);
+    return Promise.resolve(row?.value ?? defaultValue);
+  } catch {
+    return Promise.resolve(defaultValue);
+  }
+}
+
+export function setAppSetting(key: string, value: string): Promise<void> {
+  if (!db) {
+    memoryStore.settings[key] = value;
+    return Promise.resolve();
+  }
+  try {
+    db.runSync(
+      'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+      [key, value],
+    );
+  } catch (err) {
+    console.error('Error saving app setting:', err);
+  }
+  return Promise.resolve();
 }

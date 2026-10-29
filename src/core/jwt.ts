@@ -167,7 +167,23 @@ export async function verifyJwtAgainstPublicKey(
         valid: false,
         status: 'fail',
         reason: `Scanned QR is not a valid 3-part JWT token (found ${tokenParts.length} parts, expected 3).`,
+        errorCode: 'INVALID_TOKEN',
       };
+    }
+
+    // Decode unverified payload to extract claims for diagnostic context
+    let unverifiedPayload: Record<string, any> | undefined;
+    try {
+      const base64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const jsonStr = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join(''),
+      );
+      unverifiedPayload = JSON.parse(jsonStr);
+    } catch {
+      // ignore
     }
 
     let pem: string;
@@ -177,7 +193,9 @@ export async function verifyJwtAgainstPublicKey(
       return {
         valid: false,
         status: 'fail',
-        reason: pemErr.message || 'Invalid public key format',
+        reason: pemErr.message || 'Invalid public key format or certificate error',
+        errorCode: 'INVALID_CERT',
+        payload: unverifiedPayload,
       };
     }
 
@@ -191,7 +209,9 @@ export async function verifyJwtAgainstPublicKey(
       return {
         valid: false,
         status: 'fail',
-        reason: `Public key SPKI import failed: ${spkiErr.message}. Ensure you are using the PUBLIC KEY, not the Private Key.`,
+        reason: `Public key SPKI import failed: ${spkiErr.message}. Ensure you are using the matching RS256 PUBLIC KEY certificate.`,
+        errorCode: 'INVALID_CERT',
+        payload: unverifiedPayload,
       };
     }
 
@@ -199,20 +219,47 @@ export async function verifyJwtAgainstPublicKey(
     try {
       verifyResult = await jwtVerify(normalizedToken, key, { algorithms: ['RS256'] });
     } catch (jwtErr: any) {
+      const msg = String(jwtErr?.message || '');
+      const code = String(jwtErr?.code || '');
+      const name = String(jwtErr?.name || '');
+
+      // Check if signature check failed due to expiration
+      if (
+        code === 'ERR_JWT_EXPIRED' ||
+        name === 'JWTExpired' ||
+        msg.toLowerCase().includes('exp') ||
+        msg.toLowerCase().includes('expired') ||
+        (unverifiedPayload?.exp && Number(unverifiedPayload.exp) < Math.floor(Date.now() / 1000))
+      ) {
+        const expDate = unverifiedPayload?.exp ? new Date(Number(unverifiedPayload.exp) * 1000).toLocaleString() : 'past time';
+        return {
+          valid: false,
+          status: 'fail',
+          reason: `Token Expired: Shift badge expired at ${expDate}.`,
+          errorCode: 'EXPIRED',
+          payload: unverifiedPayload,
+        };
+      }
+
+      // Key mismatch or decrypt/signature failure
       return {
         valid: false,
         status: 'fail',
-        reason: `Signature verification failed: ${jwtErr.message}`,
+        reason: `Key Mismatch / Invalid Signature: Scanned QR signature does not match public key (${msg}).`,
+        errorCode: 'KEY_MISMATCH',
+        payload: unverifiedPayload,
       };
     }
 
     const payload = verifyResult.payload;
 
     if (!payload.exp || Number(payload.exp) < Math.floor(Date.now() / 1000)) {
+      const expDate = payload.exp ? new Date(Number(payload.exp) * 1000).toLocaleString() : 'unknown';
       return {
         valid: false,
         status: 'fail',
-        reason: 'Signed token has expired or is missing an "exp" timestamp.',
+        reason: `Token Expired: Shift badge expired on ${expDate}.`,
+        errorCode: 'EXPIRED',
         payload: payload as Record<string, any>,
       };
     }

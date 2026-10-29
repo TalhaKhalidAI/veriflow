@@ -28,6 +28,7 @@ export type VerificationResult = {
   status: 'pass' | 'fail';
   reason: string;
   payload?: Record<string, any>;
+  errorCode?: 'EXPIRED' | 'KEY_MISMATCH' | 'INVALID_CERT' | 'INVALID_TOKEN' | 'CRYPTO_ERROR' | 'CLAIM_MISMATCH';
 };
 
 export type UiMode = 'PASS_FAIL_MODE' | 'DATA_MODE';

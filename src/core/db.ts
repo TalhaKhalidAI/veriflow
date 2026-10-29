@@ -214,26 +214,57 @@ export function deleteInventoryItem(id: number): Promise<void> {
 }
 
 export async function syncRulesFromPayload(
-  rules?: Array<{ rule_name?: string; matching_claim_key: string; expected_value: string }>,
+  rules?: any,
 ): Promise<number> {
-  if (!rules || !Array.isArray(rules) || rules.length === 0) {
-    return 0;
+  if (!rules) return 0;
+
+  // Normalize rules into array of { ruleName, claimKey, expectedValue }
+  const normalizedList: Array<{ ruleName: string; claimKey: string; expectedValue: string }> = [];
+
+  if (Array.isArray(rules)) {
+    for (const r of rules) {
+      if (!r || typeof r !== 'object') continue;
+      if (r.matching_claim_key) {
+        normalizedList.push({
+          ruleName: r.rule_name || `Rule_${r.matching_claim_key}`,
+          claimKey: String(r.matching_claim_key),
+          expectedValue: String(r.expected_value ?? ''),
+        });
+      } else {
+        // Plain key-value object within array
+        for (const [k, v] of Object.entries(r)) {
+          normalizedList.push({
+            ruleName: `Rule_${k}`,
+            claimKey: String(k),
+            expectedValue: String(v ?? ''),
+          });
+        }
+      }
+    }
+  } else if (typeof rules === 'object') {
+    // Plain key-value dict: { matching_claim_key: expected_value }
+    for (const [k, v] of Object.entries(rules)) {
+      if (k === 'rule_name' || k === 'matching_claim_key') continue;
+      normalizedList.push({
+        ruleName: `Rule_${k}`,
+        claimKey: String(k),
+        expectedValue: String(v ?? ''),
+      });
+    }
   }
+
+  if (normalizedList.length === 0) return 0;
 
   const existing = await getInventoryItems();
   let addedCount = 0;
 
-  for (const r of rules) {
-    const ruleName = r.rule_name || `Rule_${r.matching_claim_key}`;
-    const claimKey = r.matching_claim_key;
-    const expVal = String(r.expected_value);
-
+  for (const r of normalizedList) {
     const match = existing.find(
-      e => e.matching_claim_key === claimKey && String(e.expected_value) === expVal,
+      e => e.matching_claim_key === r.claimKey && String(e.expected_value) === r.expectedValue,
     );
 
     if (!match) {
-      await addInventoryItem(ruleName, claimKey, expVal);
+      await addInventoryItem(r.ruleName, r.claimKey, r.expectedValue);
       addedCount++;
     }
   }

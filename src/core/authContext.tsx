@@ -11,6 +11,7 @@ interface AuthContextType {
   setApiBaseUrl: (url: string) => Promise<void>;
   hasPermission: (permission: string) => boolean;
   updateSessionPermissions: (newPerms: Record<string, boolean>, role?: string) => Promise<void>;
+  refreshPermissions: () => Promise<boolean>;
   markOfflineCheckout: () => Promise<void>;
   clearOfflineCheckout: () => Promise<void>;
   login: (token: string, payload: any, publicKeyId?: number) => Promise<void>;
@@ -69,32 +70,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return true;
     }
 
-    // Common synonyms / prefixes from jwt_api
+    // Strict scan permissions checking - NEVER alias to user account settings
     if (perm === 'scans.create') {
-      return (
-        session.permissions?.['scans.create'] === true ||
-        session.permissions?.['scan'] === true ||
-        session.permissions?.['user.scan.create'] === true
-      );
+      return session.permissions?.['scans.create'] === true;
     }
 
     if (perm === 'scans.view' || perm === 'scans.view.own') {
       return (
-        session.permissions?.['scans.view'] === true ||
         session.permissions?.['scans.view.own'] === true ||
-        session.permissions?.['scans.view.any'] === true ||
-        session.permissions?.['user.history.view'] === true ||
-        session.permissions?.['user.view.self'] === true
+        session.permissions?.['scans.view'] === true ||
+        session.permissions?.['scans.view.any'] === true
       );
+    }
+
+    if (perm === 'scans.view.any') {
+      return session.permissions?.['scans.view.any'] === true || session.role === 'admin';
+    }
+
+    if (perm === 'scans.update') {
+      return session.permissions?.['scans.update'] === true;
+    }
+
+    if (perm === 'scans.delete') {
+      return session.permissions?.['scans.delete'] === true;
     }
 
     if (perm === 'inventory_rules.view') {
       return (
         session.permissions?.['inventory_rules.view'] === true ||
-        session.permissions?.['inventory_rules'] === true ||
-        session.permissions?.['inventory_rules.create'] === true ||
-        session.permissions?.['inventory_rules.update'] === true ||
-        session.permissions?.['inventory_rules.delete'] === true
+        session.permissions?.['inventory_rules'] === true
       );
     }
 
@@ -122,11 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (perm === 'keys.view') {
       return (
         session.permissions?.['keys.view'] === true ||
-        session.permissions?.['keys'] === true ||
-        session.permissions?.['keys.create'] === true ||
-        session.permissions?.['keys.update'] === true ||
-        session.permissions?.['keys.revoke'] === true ||
-        session.permissions?.['keys.delete'] === true
+        session.permissions?.['keys'] === true
       );
     }
 
@@ -147,24 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (perm === 'keys.delete' || perm === 'keys.revoke') {
       return (
         session.permissions?.['keys.delete'] === true ||
-        session.permissions?.['keys.revoke'] === true ||
-        session.permissions?.['keys'] === true
-      );
-    }
-
-    if (perm === 'scans.update') {
-      return (
-        session.permissions?.['scans.update'] === true ||
-        session.permissions?.['user.history.update'] === true ||
-        session.permissions?.['user.update.self'] === true
-      );
-    }
-
-    if (perm === 'scans.delete') {
-      return (
-        session.permissions?.['scans.delete'] === true ||
-        session.permissions?.['user.history.delete'] === true ||
-        session.permissions?.['user.delete.self'] === true
+        session.permissions?.['keys.revoke'] === true
       );
     }
 
@@ -181,6 +164,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (perms['scans.create'] === undefined) perms['scans.create'] = true;
     if (perms['inventory_rules.view'] === undefined) perms['inventory_rules.view'] = true;
 
+    // Store embedded inventory rules (supports dict or array) to local SQLite DB
+    if (payload.rules) {
+      try {
+        await syncRulesFromPayload(payload.rules);
+      } catch (err) {
+        console.warn('Could not auto-sync rules from token:', err);
+      }
+    }
+
+    // Try fetching fresh permissions from server API in background if online
+    try {
+      const profileRes = await fetch(`${apiBaseUrl}/app/v1/users/users_config/me`, {
+        headers: { Authorization: `Bearer ${token.trim()}` },
+      }).catch(() => null);
+
+      if (profileRes && profileRes.ok) {
+        const profile = await profileRes.json();
+        if (profile.permissions && typeof profile.permissions === 'object') {
+          Object.assign(perms, profile.permissions);
+        }
+        if (profile.user_role) {
+          payload.role = profile.user_role;
+        }
+      }
+    } catch {
+      // Offline fallback: keep token permissions
+    }
+
     const newSession: ShiftSession = {
       token: token.trim(),
       sub: String(payload.sub || payload.email || 'operator'),
@@ -189,24 +200,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       keyId: payload.key_id ? String(payload.key_id) : undefined,
       role: payload.role ? String(payload.role) : 'user',
       permissions: perms,
-      rules: Array.isArray(payload.rules) ? payload.rules : [],
+      rules: payload.rules || [],
       exp: Number(payload.exp || 0),
       iat: Number(payload.iat || 0),
       publicKeyId,
     };
 
-    // Store embedded inventory rules to local SQLite DB
-    if (newSession.rules && newSession.rules.length > 0) {
-      try {
-        await syncRulesFromPayload(newSession.rules);
-      } catch (err) {
-        console.warn('Could not auto-sync rules from token:', err);
-      }
-    }
-
     setSession(newSession);
     await setAppSetting('active_session', JSON.stringify(newSession));
   };
+
+  const refreshPermissions = useCallback(async (): Promise<boolean> => {
+    if (!session?.token) return false;
+    try {
+      const res = await fetch(`${apiBaseUrl}/app/v1/users/users_config/me`, {
+        headers: { Authorization: `Bearer ${session.token}` },
+      }).catch(() => null);
+
+      if (res && res.ok) {
+        const profile = await res.json();
+        const serverPerms: Record<string, boolean> = {};
+        if (Array.isArray(profile.permissions)) {
+          for (const p of profile.permissions) serverPerms[p] = true;
+        } else if (profile.permissions && typeof profile.permissions === 'object') {
+          Object.assign(serverPerms, profile.permissions);
+        }
+
+        setSession(prev => {
+          if (!prev) return null;
+          const merged = { ...prev.permissions, ...serverPerms };
+          const updated: ShiftSession = {
+            ...prev,
+            role: profile.user_role || prev.role,
+            permissions: merged,
+          };
+          void setAppSetting('active_session', JSON.stringify(updated));
+          return updated;
+        });
+        return true;
+      }
+    } catch (e) {
+      console.warn('refreshPermissions failed:', e);
+    }
+    return false;
+  }, [session?.token, apiBaseUrl]);
 
   const updateSessionPermissions = useCallback(async (newPerms: Record<string, boolean>, role?: string) => {
     setSession(prev => {
@@ -260,6 +297,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setApiBaseUrl,
         hasPermission,
         updateSessionPermissions,
+        refreshPermissions,
         markOfflineCheckout,
         clearOfflineCheckout,
         login,

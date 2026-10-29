@@ -20,7 +20,7 @@ import {
   getPublicKeys,
   isScanAlreadyInQueue,
 } from '../core/db';
-import { RuleCheck, verifyJwtAgainstPublicKey } from '../core/jwt';
+import { RuleCheck, verifyJwtAgainstPublicKey, extractJwtPayload } from '../core/jwt';
 import { InventoryRecord, PublicKeyRecord, UiMode, VerificationResult } from '../core/types';
 
 const BLACK = '#07111d';
@@ -120,6 +120,8 @@ export default function ScannerPage() {
         ];
       }
 
+      const extractedPayload = extractJwtPayload(data.trim());
+
       // 1. Prevent duplicate scans for the current shift (Requirement 2)
       const isDuplicate = await isScanAlreadyInQueue(
         data.trim(),
@@ -132,6 +134,8 @@ export default function ScannerPage() {
           valid: false,
           status: 'fail',
           reason: 'Duplicate Item: Already scanned in this shift. Skipped to prevent redundancy.',
+          errorCode: 'CLAIM_MISMATCH',
+          payload: extractedPayload || undefined,
         };
         setResult(dupRes);
         setSplashResult(dupRes);
@@ -145,6 +149,9 @@ export default function ScannerPage() {
         rulesToCheck,
       );
 
+      if (!verifyRes.payload && extractedPayload) {
+        verifyRes.payload = extractedPayload;
+      }
       setResult(verifyRes);
       setSplashResult(verifyRes);
 
@@ -315,18 +322,38 @@ export default function ScannerPage() {
             <Box
               bg={PANEL}
               borderWidth={2}
-              borderColor={result.status === 'pass' ? PASS_COLOR : FAIL_COLOR}
+              borderColor={
+                result.reason?.toLowerCase().includes('duplicate')
+                  ? '#f59e0b'
+                  : result.status === 'pass'
+                  ? PASS_COLOR
+                  : FAIL_COLOR
+              }
               borderRadius="$xl"
               p="$4"
             >
               <HStack space="sm" alignItems="center" mb="$2">
                 {result.status === 'pass' ? (
                   <CheckCircle2 size={24} color={PASS_COLOR} />
+                ) : result.reason?.toLowerCase().includes('duplicate') ? (
+                  <ShieldAlert size={24} color="#f59e0b" />
                 ) : (
                   <XCircle size={24} color={FAIL_COLOR} />
                 )}
-                <Text color={result.status === 'pass' ? PASS_COLOR : FAIL_COLOR} fontSize="$xl" fontWeight="900">
-                  {result.status.toUpperCase()}
+                <Text
+                  color={
+                    result.reason?.toLowerCase().includes('duplicate')
+                      ? '#f59e0b'
+                      : result.status === 'pass'
+                      ? PASS_COLOR
+                      : FAIL_COLOR
+                  }
+                  fontSize="$xl"
+                  fontWeight="900"
+                >
+                  {result.reason?.toLowerCase().includes('duplicate')
+                    ? 'DUPLICATE (ALREADY SCANNED)'
+                    : result.status.toUpperCase()}
                 </Text>
               </HStack>
 
@@ -334,14 +361,60 @@ export default function ScannerPage() {
                 {result.reason}
               </Text>
 
-              {uiMode === 'DATA_MODE' && result.payload ? (
+              {uiMode === 'DATA_MODE' ? (
                 <Box bg={PANEL_ALT} p="$3" borderRadius="$md" mt="$2">
-                  <Text color={YELLOW} fontSize="$xs" fontWeight="800" mb="$1">DECODED CLAIMS:</Text>
-                  <ScrollView style={{ maxHeight: 180 }}>
-                    <Text color="#cbd5e1" fontSize="$xs">
-                      {JSON.stringify(result.payload, null, 2)}
+                  <HStack justifyContent="space-between" alignItems="center" mb="$2">
+                    <Text color={YELLOW} fontSize="$xs" fontWeight="800">
+                      DECODED JWT DATA / CLAIMS:
                     </Text>
-                  </ScrollView>
+                    {result.reason?.toLowerCase().includes('duplicate') ? (
+                      <Text color="#f59e0b" fontSize="$2xs" fontWeight="900">
+                        [DUPLICATE SCAN]
+                      </Text>
+                    ) : null}
+                  </HStack>
+                  {result.payload ? (
+                    <VStack space="xs">
+                      {Object.entries(result.payload).map(([k, v]) => (
+                        <HStack
+                          key={k}
+                          justifyContent="space-between"
+                          py="$1"
+                          borderBottomWidth={1}
+                          borderBottomColor="#1e293b"
+                        >
+                          <Text color={MUTED} fontSize="$xs" fontWeight="700">
+                            {k}:
+                          </Text>
+                          <Text
+                            color="#f8fafc"
+                            fontSize="$xs"
+                            fontWeight="600"
+                            numberOfLines={2}
+                            flex={1}
+                            textAlign="right"
+                            ml="$2"
+                          >
+                            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                          </Text>
+                        </HStack>
+                      ))}
+                      <Box mt="$2" pt="$1">
+                        <Text color="#64748b" fontSize="$2xs" fontWeight="700" mb="$1">
+                          RAW JSON CLAIMS:
+                        </Text>
+                        <ScrollView style={{ maxHeight: 120 }}>
+                          <Text color="#cbd5e1" fontSize="$xs">
+                            {JSON.stringify(result.payload, null, 2)}
+                          </Text>
+                        </ScrollView>
+                      </Box>
+                    </VStack>
+                  ) : (
+                    <Text color={MUTED} fontSize="$xs">
+                      None (Data could not be decoded as a valid JWT payload)
+                    </Text>
+                  )}
                 </Box>
               ) : null}
             </Box>

@@ -45,7 +45,7 @@ export type ShiftSession = {
     rule_name?: string;
     matching_claim_key: string;
     expected_value: string;
-  }>;
+  }> | Record<string, any>;
   exp: number;
   iat: number;
   publicKeyId?: number;

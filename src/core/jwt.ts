@@ -306,3 +306,47 @@ export async function verifyJwtAgainstPublicKey(
     };
   }
 }
+
+/**
+ * Decodes the unverified payload claims from a JWT token without verifying signature.
+ * Returns null if the token cannot be parsed as a JWT.
+ */
+export function extractJwtPayload(rawToken: string): Record<string, any> | null {
+  try {
+    const token = normalizeJwtToken(rawToken);
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decodes the unverified header from a JWT token.
+ * Returns null if the token header cannot be parsed.
+ */
+export function extractJwtHeader(rawToken: string): Record<string, any> | null {
+  try {
+    const token = normalizeJwtToken(rawToken);
+    const parts = token.split('.');
+    if (parts.length < 1) return null;
+    const base64 = parts[0].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}

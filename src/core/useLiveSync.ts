@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAuth } from './authContext';
 import { upsertPublicKey } from './db';
 
@@ -8,9 +8,11 @@ import { upsertPublicKey } from './db';
  * - If online: periodically queries the API for updated user permissions and active public keys.
  *   If permissions or keys have changed, updates local session and SQLite.
  * - If offline: does nothing, preserving all existing local permissions and cached keys.
+ * - Uses stable memoized refs to prevent infinite re-render loops.
  */
 export function useLiveSync() {
   const { session, isLoggedIn, apiBaseUrl, updateSessionPermissions } = useAuth();
+  const lastSyncedPermsRef = useRef<string>('');
 
   // 1. Live Permissions Query using TanStack Query
   const permissionsQuery = useQuery({
@@ -46,19 +48,20 @@ export function useLiveSync() {
       Object.assign(newPermMap, data.permissions);
     }
 
-    const localPerms = session?.permissions || {};
     const newKeys = Object.keys(newPermMap).filter(k => newPermMap[k]).sort();
+    const newKeysSignature = JSON.stringify(newKeys);
+
+    const localPerms = session?.permissions || {};
     const localKeys = Object.keys(localPerms).filter(k => localPerms[k]).sort();
+    const localKeysSignature = JSON.stringify(localKeys);
 
-    const isDifferent =
-      newKeys.length !== localKeys.length ||
-      newKeys.some((k, i) => k !== localKeys[i]);
-
-    if (isDifferent) {
+    // Only update if permissions actually differ AND have not already been applied in this cycle
+    if (newKeysSignature !== localKeysSignature && newKeysSignature !== lastSyncedPermsRef.current) {
+      lastSyncedPermsRef.current = newKeysSignature;
       console.log('[VeriFlow LiveSync] Server permissions updated:', newPermMap);
       void updateSessionPermissions(newPermMap, data.user_role || data.role);
     }
-  }, [permissionsQuery.data, session?.permissions, updateSessionPermissions]);
+  }, [permissionsQuery.data, updateSessionPermissions]);
 
   // 2. Live Public Keys (JWKS) Query using TanStack Query
   const keysQuery = useQuery({
@@ -73,11 +76,17 @@ export function useLiveSync() {
     retry: false,
   });
 
+  const lastSyncedKeysRef = useRef<string>('');
+
   useEffect(() => {
     if (keysQuery.data?.keys && Array.isArray(keysQuery.data.keys)) {
-      for (const k of keysQuery.data.keys) {
-        if (k.kid && k.public_key) {
-          void upsertPublicKey(k.kid, k.public_key);
+      const keysSignature = JSON.stringify(keysQuery.data.keys.map((k: any) => k.kid || k.id));
+      if (keysSignature !== lastSyncedKeysRef.current) {
+        lastSyncedKeysRef.current = keysSignature;
+        for (const k of keysQuery.data.keys) {
+          if (k.kid && k.public_key) {
+            void upsertPublicKey(k.kid, k.public_key);
+          }
         }
       }
     }

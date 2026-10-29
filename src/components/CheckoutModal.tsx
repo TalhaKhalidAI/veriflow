@@ -11,9 +11,9 @@ import {
 import { useMutation } from '@tanstack/react-query';
 import { LogOut, UploadCloud, CheckCircle2, AlertTriangle, WifiOff, RefreshCw } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useAuth } from '../core/authContext';
-import { getPendingScans, markScansAsSynced, markScansAsFailed } from '../core/db';
+import { getPendingScans, markScansAsSynced, markScansAsFailed, setAppSetting } from '../core/db';
 
 const BLACK = '#07111d';
 const PANEL = '#0f172a';
@@ -31,6 +31,8 @@ interface CheckoutModalProps {
 
 export function CheckoutModal({ visible, onClose }: CheckoutModalProps) {
   const { session, apiBaseUrl, logout, markOfflineCheckout, clearOfflineCheckout } = useAuth();
+  const { width } = useWindowDimensions();
+  const isSmallScreen = width < 390;
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [offlineDetected, setOfflineDetected] = useState<boolean>(false);
   const [shiftOverNotice, setShiftOverNotice] = useState<string | null>(null);
@@ -170,8 +172,11 @@ export function CheckoutModal({ visible, onClose }: CheckoutModalProps) {
     },
   });
 
-  // Offline checkout: skips all transfer, removes session token, and exits immediately
+  // Offline checkout: records offline checkout shift ID, skips transfer, removes token, and exits
   const handleOfflineCheckout = async () => {
+    if (session?.shiftId) {
+      await setAppSetting('offline_checkout_shift_id', session.shiftId);
+    }
     onClose();
     await logout();
   };
@@ -279,52 +284,105 @@ export function CheckoutModal({ visible, onClose }: CheckoutModalProps) {
             </Box>
           ) : null}
 
-          <HStack space="sm" justifyContent="space-between" alignItems="center" mt="$2">
-            <Button
-              variant="outline"
-              borderColor="#ef4444"
-              onPress={handleOfflineCheckout}
-              isDisabled={isPending || isSuccess}
-              size="sm"
-            >
-              <HStack space="xs" alignItems="center">
-                <WifiOff size={14} color="#ef4444" />
-                <ButtonText color="#ef4444" fontSize="$xs">Offline Exit</ButtonText>
-              </HStack>
-            </Button>
+          {/* Responsive Action Buttons */}
+          {isSmallScreen ? (
+            <VStack space="xs" mt="$2">
+              <HStack space="xs">
+                <Button
+                  flex={1}
+                  variant="outline"
+                  borderColor="#64748b"
+                  onPress={onClose}
+                  isDisabled={isPending || isSuccess}
+                  size="sm"
+                >
+                  <ButtonText color="#cbd5e1" fontSize="$xs">Cancel</ButtonText>
+                </Button>
 
-            <HStack space="sm">
+                <Button
+                  flex={2}
+                  bg={YELLOW}
+                  onPress={() => checkoutMutation.mutate()}
+                  isDisabled={isPending || isSuccess}
+                  size="sm"
+                >
+                  {isPending ? (
+                    <HStack space="xs" alignItems="center">
+                      <ActivityIndicator size="small" color={BLACK} />
+                      <ButtonText color={BLACK} fontWeight="900" ml="$1" fontSize="$xs">
+                        Transferring...
+                      </ButtonText>
+                    </HStack>
+                  ) : (
+                    <ButtonText color={BLACK} fontWeight="900" fontSize="$xs">
+                      Transfer & Checkout
+                    </ButtonText>
+                  )}
+                </Button>
+              </HStack>
+
               <Button
                 variant="outline"
-                borderColor="#64748b"
-                onPress={onClose}
+                borderColor="#ef4444"
+                onPress={handleOfflineCheckout}
+                isDisabled={isPending || isSuccess}
+                size="xs"
+                mt="$1"
+              >
+                <HStack space="xs" alignItems="center">
+                  <WifiOff size={13} color="#ef4444" />
+                  <ButtonText color="#ef4444" fontSize="$2xs">Offline Exit (Skip Transfer)</ButtonText>
+                </HStack>
+              </Button>
+            </VStack>
+          ) : (
+            <HStack space="sm" justifyContent="space-between" alignItems="center" mt="$2">
+              <Button
+                variant="outline"
+                borderColor="#ef4444"
+                onPress={handleOfflineCheckout}
                 isDisabled={isPending || isSuccess}
                 size="sm"
               >
-                <ButtonText color="#cbd5e1" fontSize="$xs">Cancel</ButtonText>
+                <HStack space="xs" alignItems="center">
+                  <WifiOff size={14} color="#ef4444" />
+                  <ButtonText color="#ef4444" fontSize="$xs">Offline Exit</ButtonText>
+                </HStack>
               </Button>
 
-              <Button
-                bg={YELLOW}
-                onPress={() => checkoutMutation.mutate()}
-                isDisabled={isPending || isSuccess}
-                size="sm"
-              >
-                {isPending ? (
-                  <HStack space="xs" alignItems="center">
-                    <ActivityIndicator size="small" color={BLACK} />
-                    <ButtonText color={BLACK} fontWeight="900" ml="$2" fontSize="$xs">
-                      Transferring...
+              <HStack space="sm">
+                <Button
+                  variant="outline"
+                  borderColor="#64748b"
+                  onPress={onClose}
+                  isDisabled={isPending || isSuccess}
+                  size="sm"
+                >
+                  <ButtonText color="#cbd5e1" fontSize="$xs">Cancel</ButtonText>
+                </Button>
+
+                <Button
+                  bg={YELLOW}
+                  onPress={() => checkoutMutation.mutate()}
+                  isDisabled={isPending || isSuccess}
+                  size="sm"
+                >
+                  {isPending ? (
+                    <HStack space="xs" alignItems="center">
+                      <ActivityIndicator size="small" color={BLACK} />
+                      <ButtonText color={BLACK} fontWeight="900" ml="$2" fontSize="$xs">
+                        Transferring...
+                      </ButtonText>
+                    </HStack>
+                  ) : (
+                    <ButtonText color={BLACK} fontWeight="900" fontSize="$xs">
+                      Transfer & Checkout
                     </ButtonText>
-                  </HStack>
-                ) : (
-                  <ButtonText color={BLACK} fontWeight="900" fontSize="$xs">
-                    Transfer & Checkout
-                  </ButtonText>
-                )}
-              </Button>
+                  )}
+                </Button>
+              </HStack>
             </HStack>
-          </HStack>
+          )}
         </Box>
       </View>
     </Modal>

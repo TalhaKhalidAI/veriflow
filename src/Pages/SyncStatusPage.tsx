@@ -22,7 +22,7 @@ import {
   ArrowRight,
 } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useAuth } from '../core/authContext';
 import {
   getAllScans,
@@ -45,6 +45,9 @@ const BLUE_ACCENT = '#38bdf8';
 export default function SyncStatusPage() {
   const { session, apiBaseUrl, clearOfflineCheckout } = useAuth();
   const queryClient = useQueryClient();
+  const { width } = useWindowDimensions();
+  const isCompact = width < 460;
+  const isNarrow = width < 380;
   const [filter, setFilter] = useState<'all' | 'failed' | 'pending' | 'synced'>('all');
   const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -179,6 +182,7 @@ export default function SyncStatusPage() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      <Box width="100%" maxWidth={720} alignSelf="center">
       {/* Header */}
       <HStack justifyContent="space-between" alignItems="center" mb="$4">
         <VStack>
@@ -237,57 +241,109 @@ export default function SyncStatusPage() {
         </Box>
       ) : null}
 
-      {/* Metrics Grid */}
-      <HStack space="sm" mb="$4">
-        {/* Total Scanned */}
-        <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="#1e293b">
-          <HStack justifyContent="space-between" alignItems="center">
-            <Text color={MUTED} fontSize="$xs" fontWeight="700">TOTAL</Text>
-            <Layers size={14} color={MUTED} />
-          </HStack>
-          <Text color="#f8fafc" fontSize="$2xl" fontWeight="900" mt="$1">
-            {scans.length}
-          </Text>
-        </Box>
+      {/* Responsive Metrics Grid (2x2 on mobile, 1x4 on tablet/desktop) */}
+      {isCompact ? (
+        <VStack space="sm" mb="$4">
+          <HStack space="sm">
+            {/* Total Scanned */}
+            <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="#1e293b">
+              <HStack justifyContent="space-between" alignItems="center">
+                <Text color={MUTED} fontSize="$2xs" fontWeight="700">TOTAL</Text>
+                <Layers size={14} color={MUTED} />
+              </HStack>
+              <Text color="#f8fafc" fontSize="$xl" fontWeight="900" mt="$1">
+                {scans.length}
+              </Text>
+            </Box>
 
-        {/* Synced */}
-        <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(34, 197, 94, 0.3)">
-          <HStack justifyContent="space-between" alignItems="center">
-            <Text color={PASS_COLOR} fontSize="$xs" fontWeight="700">SYNCED</Text>
-            <CheckCircle2 size={14} color={PASS_COLOR} />
+            {/* Synced */}
+            <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(34, 197, 94, 0.3)">
+              <HStack justifyContent="space-between" alignItems="center">
+                <Text color={PASS_COLOR} fontSize="$2xs" fontWeight="700">SYNCED</Text>
+                <CheckCircle2 size={14} color={PASS_COLOR} />
+              </HStack>
+              <Text color={PASS_COLOR} fontSize="$xl" fontWeight="900" mt="$1">
+                {syncedCount}
+              </Text>
+            </Box>
           </HStack>
-          <Text color={PASS_COLOR} fontSize="$2xl" fontWeight="900" mt="$1">
-            {syncedCount}
-          </Text>
-        </Box>
 
-        {/* Pending */}
-        <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(250, 204, 21, 0.3)">
-          <HStack justifyContent="space-between" alignItems="center">
-            <Text color={YELLOW} fontSize="$xs" fontWeight="700">PENDING</Text>
-            <Clock size={14} color={YELLOW} />
+          <HStack space="sm">
+            {/* Pending */}
+            <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(250, 204, 21, 0.3)">
+              <HStack justifyContent="space-between" alignItems="center">
+                <Text color={YELLOW} fontSize="$2xs" fontWeight="700">PENDING</Text>
+                <Clock size={14} color={YELLOW} />
+              </HStack>
+              <Text color={YELLOW} fontSize="$xl" fontWeight="900" mt="$1">
+                {pendingCount}
+              </Text>
+            </Box>
+
+            {/* Failed */}
+            <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(239, 68, 68, 0.3)">
+              <HStack justifyContent="space-between" alignItems="center">
+                <Text color={FAIL_COLOR} fontSize="$2xs" fontWeight="700">FAILED</Text>
+                <AlertTriangle size={14} color={FAIL_COLOR} />
+              </HStack>
+              <Text color={FAIL_COLOR} fontSize="$xl" fontWeight="900" mt="$1">
+                {failedCount}
+              </Text>
+            </Box>
           </HStack>
-          <Text color={YELLOW} fontSize="$2xl" fontWeight="900" mt="$1">
-            {pendingCount}
-          </Text>
-        </Box>
+        </VStack>
+      ) : (
+        <HStack space="sm" mb="$4">
+          {/* Total Scanned */}
+          <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="#1e293b">
+            <HStack justifyContent="space-between" alignItems="center">
+              <Text color={MUTED} fontSize="$xs" fontWeight="700">TOTAL</Text>
+              <Layers size={14} color={MUTED} />
+            </HStack>
+            <Text color="#f8fafc" fontSize="$2xl" fontWeight="900" mt="$1">
+              {scans.length}
+            </Text>
+          </Box>
 
-        {/* Failed */}
-        <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(239, 68, 68, 0.3)">
-          <HStack justifyContent="space-between" alignItems="center">
-            <Text color={FAIL_COLOR} fontSize="$xs" fontWeight="700">FAILED</Text>
-            <AlertTriangle size={14} color={FAIL_COLOR} />
-          </HStack>
-          <Text color={FAIL_COLOR} fontSize="$2xl" fontWeight="900" mt="$1">
-            {failedCount}
-          </Text>
-        </Box>
-      </HStack>
+          {/* Synced */}
+          <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(34, 197, 94, 0.3)">
+            <HStack justifyContent="space-between" alignItems="center">
+              <Text color={PASS_COLOR} fontSize="$xs" fontWeight="700">SYNCED</Text>
+              <CheckCircle2 size={14} color={PASS_COLOR} />
+            </HStack>
+            <Text color={PASS_COLOR} fontSize="$2xl" fontWeight="900" mt="$1">
+              {syncedCount}
+            </Text>
+          </Box>
 
-      {/* Resync Action Button (Requirement 6) */}
+          {/* Pending */}
+          <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(250, 204, 21, 0.3)">
+            <HStack justifyContent="space-between" alignItems="center">
+              <Text color={YELLOW} fontSize="$xs" fontWeight="700">PENDING</Text>
+              <Clock size={14} color={YELLOW} />
+            </HStack>
+            <Text color={YELLOW} fontSize="$2xl" fontWeight="900" mt="$1">
+              {pendingCount}
+            </Text>
+          </Box>
+
+          {/* Failed */}
+          <Box flex={1} bg={PANEL} p="$3" borderRadius="$xl" borderWidth={1} borderColor="rgba(239, 68, 68, 0.3)">
+            <HStack justifyContent="space-between" alignItems="center">
+              <Text color={FAIL_COLOR} fontSize="$xs" fontWeight="700">FAILED</Text>
+              <AlertTriangle size={14} color={FAIL_COLOR} />
+            </HStack>
+            <Text color={FAIL_COLOR} fontSize="$2xl" fontWeight="900" mt="$1">
+              {failedCount}
+            </Text>
+          </Box>
+        </HStack>
+      )}
+
+      {/* Responsive Resync Action Card */}
       <Box bg={PANEL_ALT} p="$4" borderRadius="$xl" borderWidth={1} borderColor="#334155" mb="$4">
-        <HStack justifyContent="space-between" alignItems="center" mb="$3">
-          <VStack flex={1} pr="$2">
+        <View style={{ flexDirection: isNarrow ? 'column' : 'row', justifyContent: 'space-between', alignItems: isNarrow ? 'stretch' : 'center', marginBottom: 12 }}>
+          <VStack flex={isNarrow ? undefined : 1} pr={isNarrow ? '$0' : '$3'} mb={isNarrow ? '$3' : '$0'}>
             <Text color="#f8fafc" fontWeight="800" fontSize="$sm">
               Server Sync Dispatcher
             </Text>
@@ -302,25 +358,25 @@ export default function SyncStatusPage() {
             bg={YELLOW}
             onPress={() => resyncMutation.mutate()}
             isDisabled={resyncMutation.isPending || unsyncedTotal === 0}
-            size="md"
+            size={isNarrow ? 'sm' : 'md'}
           >
             {resyncMutation.isPending ? (
               <HStack space="xs" alignItems="center">
                 <ActivityIndicator size="small" color={BLACK} />
-                <ButtonText color={BLACK} fontWeight="900" ml="$2">
+                <ButtonText color={BLACK} fontWeight="900" ml="$2" fontSize="$xs">
                   Syncing...
                 </ButtonText>
               </HStack>
             ) : (
               <HStack space="xs" alignItems="center">
                 <RefreshCw size={16} color={BLACK} />
-                <ButtonText color={BLACK} fontWeight="900" ml="$2">
+                <ButtonText color={BLACK} fontWeight="900" ml="$2" fontSize="$xs">
                   Resync All Data
                 </ButtonText>
               </HStack>
             )}
           </Button>
-        </HStack>
+        </View>
 
         {syncFeedback ? (
           <Box
@@ -460,6 +516,7 @@ export default function SyncStatusPage() {
           })
         )}
       </VStack>
+          </Box>
     </ScrollView>
   );
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Platform } from 'react-native';
 import { getAppSetting, initDatabase, setAppSetting, syncRulesFromPayload } from './db';
 import { ShiftSession } from './types';
@@ -208,42 +208,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await setAppSetting('active_session', JSON.stringify(newSession));
   };
 
-  const updateSessionPermissions = async (newPerms: Record<string, boolean>, role?: string) => {
-    if (!session) return;
-    const merged = { ...session.permissions, ...newPerms };
-    const updated: ShiftSession = {
-      ...session,
-      role: role || session.role,
-      permissions: merged,
-    };
-    setSession(updated);
-    await setAppSetting('active_session', JSON.stringify(updated));
-  };
+  const updateSessionPermissions = useCallback(async (newPerms: Record<string, boolean>, role?: string) => {
+    setSession(prev => {
+      if (!prev) return null;
+      const updated: ShiftSession = {
+        ...prev,
+        role: role || prev.role,
+        permissions: newPerms,
+      };
+      void setAppSetting('active_session', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-  const markOfflineCheckout = async () => {
-    if (!session) return;
-    const updated: ShiftSession = {
-      ...session,
-      offlineCheckoutPending: true,
-    };
-    setSession(updated);
-    await setAppSetting('active_session', JSON.stringify(updated));
-  };
+  const markOfflineCheckout = useCallback(async () => {
+    setSession(prev => {
+      if (!prev) return null;
+      const updated: ShiftSession = {
+        ...prev,
+        offlineCheckoutPending: true,
+      };
+      void setAppSetting('active_session', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-  const clearOfflineCheckout = async () => {
-    if (!session) return;
-    const updated: ShiftSession = {
-      ...session,
-      offlineCheckoutPending: false,
-    };
-    setSession(updated);
-    await setAppSetting('active_session', JSON.stringify(updated));
-  };
+  const clearOfflineCheckout = useCallback(async () => {
+    setSession(prev => {
+      if (!prev) return null;
+      const updated: ShiftSession = {
+        ...prev,
+        offlineCheckoutPending: false,
+      };
+      void setAppSetting('active_session', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     setSession(null);
     await setAppSetting('active_session', '');
-  };
+  }, []);
 
   return (
     <AuthContext.Provider

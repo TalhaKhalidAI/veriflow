@@ -6,7 +6,7 @@ import { Drawer, DrawerContentScrollView, DrawerItemList } from 'expo-router/dra
 import * as SplashScreen from 'expo-splash-screen';
 import { LogOut } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, useColorScheme, useWindowDimensions } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { CheckoutModal } from '@/components/CheckoutModal';
@@ -29,6 +29,7 @@ const queryClient = new QueryClient({
 
 function MainAppDrawer() {
   const { session, isLoggedIn, isLoading } = useAuth();
+  const { width } = useWindowDimensions();
   const [checkoutVisible, setCheckoutVisible] = useState(false);
 
   // Requirement 4: Real-time TanStack Query sync for permissions and public keys
@@ -94,7 +95,7 @@ function MainAppDrawer() {
           headerStyle: { backgroundColor: '#07111d' },
           headerTintColor: '#facc15',
           headerTitleStyle: { fontWeight: '900', fontSize: 24 },
-          drawerStyle: { backgroundColor: '#0b1220', width: 280 },
+          drawerStyle: { backgroundColor: '#0b1220', width: Math.min(280, Math.floor(width * 0.82)) },
           drawerActiveTintColor: '#facc15',
           drawerInactiveTintColor: '#e2e8f0',
           drawerLabelStyle: { fontWeight: '700' },

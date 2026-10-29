@@ -69,6 +69,8 @@ export function initDatabase(): Promise<void> {
         try { db.execSync('ALTER TABLE scans_queue ADD COLUMN shift_id TEXT;'); } catch {}
         try { db.execSync('ALTER TABLE scans_queue ADD COLUMN scanned_at TEXT;'); } catch {}
         try { db.execSync('ALTER TABLE scans_queue ADD COLUMN notes TEXT;'); } catch {}
+        try { db.execSync('CREATE INDEX IF NOT EXISTS idx_scans_user_sync ON scans_queue (user_id, sync_status);'); } catch {}
+        try { db.execSync('CREATE INDEX IF NOT EXISTS idx_scans_jwt_shift ON scans_queue (scanned_jwt, shift_id);'); } catch {}
       });
       resolve();
     } catch (error) {

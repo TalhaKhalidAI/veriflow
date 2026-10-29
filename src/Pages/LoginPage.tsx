@@ -23,6 +23,8 @@ import {
   LogOut,
   LogIn,
   UploadCloud,
+  Flashlight,
+  FlashlightOff,
 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, StyleSheet, View, useWindowDimensions } from 'react-native';
@@ -49,6 +51,7 @@ const PASS_COLOR = '#22c55e';
 export default function LoginPage() {
   const { login, apiBaseUrl, setApiBaseUrl } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
+  const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const { width, height } = useWindowDimensions();
   const cameraBoxHeight = Math.min(280, Math.max(190, height * 0.33));
 
@@ -707,6 +710,7 @@ ${k.x5c[0]}
                 <CameraView
                   style={StyleSheet.absoluteFill}
                   facing="back"
+                  enableTorch={isTorchOn}
                   barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                   onBarcodeScanned={(isVerifying || scanCooldown || Boolean(completedShiftPrompt) || Boolean(activeShiftPrompt)) ? undefined : handleBarcodeScanned}
                 />
@@ -726,6 +730,29 @@ ${k.x5c[0]}
                     </ButtonText>
                   </Button>
                 </VStack>
+              )}
+
+              {permission?.granted && (
+                <Pressable
+                  position="absolute"
+                  top={12}
+                  right={12}
+                  zIndex={10}
+                  onPress={() => setIsTorchOn(prev => !prev)}
+                  bg={isTorchOn ? YELLOW : "rgba(5, 9, 20, 0.75)"}
+                  p=".5"
+                  borderRadius=""
+                  borderWidth={1}
+                  borderColor={isTorchOn ? YELLOW : "rgba(255, 255, 255, 0.3)"}
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  {isTorchOn ? (
+                    <Flashlight size={20} color={BLACK} />
+                  ) : (
+                    <FlashlightOff size={20} color="#f8fafc" />
+                  )}
+                </Pressable>
               )}
 
               {/* Aiming Reticle Overlay */}

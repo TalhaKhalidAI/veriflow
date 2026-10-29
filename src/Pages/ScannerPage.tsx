@@ -10,7 +10,7 @@ import {
   VStack,
 } from '@gluestack-ui/themed';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { ShieldAlert, CheckCircle2, XCircle, SlidersHorizontal } from 'lucide-react-native';
+import { ShieldAlert, CheckCircle2, XCircle, SlidersHorizontal, Flashlight, FlashlightOff } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useAuth } from '../core/authContext';
@@ -46,8 +46,10 @@ export default function ScannerPage() {
   // Inventory Rules state
   const [inventoryRules, setInventoryRules] = useState<InventoryRecord[]>([]);
   const [selectedRuleId, setSelectedRuleId] = useState<number | 'ALL' | null>(null);
+  const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
 
   // Camera & Scan state
+  const scanLockRef = React.useRef<boolean>(false);
   const [hasScanned, setHasScanned] = useState<boolean>(false);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [result, setResult] = useState<VerificationResult | null>(null);
@@ -85,7 +87,8 @@ export default function ScannerPage() {
   }, []);
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
-    if (isVerifying || hasScanned) return;
+    if (scanLockRef.current || isVerifying || hasScanned) return;
+    scanLockRef.current = true;
     setHasScanned(true);
     setIsVerifying(true);
 
@@ -180,6 +183,7 @@ export default function ScannerPage() {
   };
 
   const resetScanner = () => {
+    scanLockRef.current = false;
     setHasScanned(false);
     setResult(null);
     setSplashResult(null);
@@ -283,6 +287,7 @@ export default function ScannerPage() {
               <CameraView
                 style={StyleSheet.absoluteFill}
                 facing="back"
+                enableTorch={isTorchOn}
                 barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                 onBarcodeScanned={isVerifying || hasScanned ? undefined : handleBarcodeScanned}
               />
@@ -293,6 +298,29 @@ export default function ScannerPage() {
                   <ButtonText color={BLACK} fontWeight="800">Enable Camera</ButtonText>
                 </Button>
               </VStack>
+            )}
+
+            {permission?.granted && (
+              <Pressable
+                position="absolute"
+                top={12}
+                right={12}
+                zIndex={10}
+                onPress={() => setIsTorchOn(prev => !prev)}
+                bg={isTorchOn ? YELLOW : "rgba(5, 9, 20, 0.75)"}
+                p=".5"
+                borderRadius=""
+                borderWidth={1}
+                borderColor={isTorchOn ? YELLOW : "rgba(255, 255, 255, 0.3)"}
+                alignItems="center"
+                justifyContent="center"
+              >
+                {isTorchOn ? (
+                  <Flashlight size={20} color={BLACK} />
+                ) : (
+                  <FlashlightOff size={20} color="#f8fafc" />
+                )}
+              </Pressable>
             )}
 
             {/* Reticle */}

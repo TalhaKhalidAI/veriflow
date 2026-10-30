@@ -16,7 +16,8 @@
         "foregroundImage": "./src/assets/icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.veriflow"
+      "package": "com.anonymous.veriflow",
+      "usesCleartextTraffic": true
     },
     "web": {
       "output": "server",
